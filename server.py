@@ -5,6 +5,8 @@ import os
 import threading
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
@@ -178,6 +180,32 @@ def check_selected():
         'message': f'{len(keywords)}개 키워드 체크를 시작합니다.',
         'keywords': keyword_names
     })
+
+
+def scheduled_check():
+    """매일 자동 순위 체크 (스케줄러에서 호출)"""
+    global is_checking
+    if is_checking:
+        print("[스케줄러] 이미 체크 진행 중 - 스킵")
+        return
+    print(f"[스케줄러] 자동 순위 체크 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    keywords = read_keywords()
+    if not keywords:
+        print("[스케줄러] 키워드 없음")
+        return
+    is_checking = True
+    run_check_async(keywords, send_telegram=True)
+
+
+# 스케줄러 설정 - 매일 새벽 6시(KST) = 21시(UTC)
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    scheduled_check,
+    CronTrigger(hour=21, minute=0, timezone='UTC'),  # KST 06:00
+    id='daily_check',
+    name='매일 새벽 6시 자동 체크'
+)
+scheduler.start()
 
 
 if __name__ == '__main__':
