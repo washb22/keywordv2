@@ -23,11 +23,8 @@ function onOpen() {
 }
 
 function requestCheckAll() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('키워드');
-  if (!sheet) {
-    SpreadsheetApp.getUi().alert('\'키워드\' 시트를 찾을 수 없습니다.');
-    return;
-  }
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var sheetName = sheet.getName();
 
   var lastRow = sheet.getLastRow();
   var keywordCount = lastRow > 1 ? lastRow - 1 : 0;
@@ -35,8 +32,6 @@ function requestCheckAll() {
     SpreadsheetApp.getUi().alert('키워드가 없습니다.');
     return;
   }
-
-  var sheetName = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet().getName();
 
   try {
     var payload = { 'sheet_name': sheetName };
@@ -61,11 +56,8 @@ function requestCheckAll() {
 }
 
 function requestCheckSelected() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('키워드');
-  if (!sheet) {
-    SpreadsheetApp.getUi().alert('\'키워드\' 시트를 찾을 수 없습니다.');
-    return;
-  }
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var sheetName = sheet.getName();
 
   var selection = SpreadsheetApp.getActiveRange();
   var startRow = selection.getRow();
@@ -77,9 +69,14 @@ function requestCheckSelected() {
   }
 
   var keywords = [];
+  var validStartRow = startRow;
+  var validEndRow = startRow;
   for (var i = startRow; i <= endRow; i++) {
     var kw = sheet.getRange(i, 1).getValue();
-    if (kw) keywords.push(kw);
+    if (kw && kw.toString().trim() !== '') {
+      keywords.push(kw.toString().trim());
+      validEndRow = i;
+    }
   }
 
   if (keywords.length === 0) {
@@ -87,10 +84,8 @@ function requestCheckSelected() {
     return;
   }
 
-  var sheetName = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet().getName();
-
   try {
-    var payload = { 'start_row': startRow, 'end_row': endRow, 'sheet_name': sheetName };
+    var payload = { 'start_row': validStartRow, 'end_row': validEndRow, 'sheet_name': sheetName };
     var options = {
       'method': 'post',
       'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
@@ -111,8 +106,7 @@ function requestCheckSelected() {
 }
 
 function applyFormatting() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('키워드');
-  if (!sheet) return;
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
 
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
@@ -261,14 +255,11 @@ function resetSheet() {
   );
   if (response !== ui.Button.YES) return;
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('키워드');
-  if (!sheet) {
-    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('키워드');
-  }
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
 
   sheet.clear();
   var headers = ['키워드', '글 제목', 'URL', '이전 순위', '현재 순위', '변동', '마지막 확인'];
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   applyFormatting();
-  ui.alert('초기화 완료!\n\nA~C열에 키워드 정보를 입력하세요.');
+  ui.alert('\'' + sheet.getName() + '\' 시트 초기화 완료!\n\nA~C열에 키워드 정보를 입력하세요.');
 }
