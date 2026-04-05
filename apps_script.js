@@ -5,7 +5,7 @@
 
 // ★ 여기에 Render 서버 URL과 API 키를 입력하세요
 var SERVER_URL = 'https://keywordv2.onrender.com';
-var API_KEY = '';  // 서버의 API_KEY 환경변수와 동일하게 설정
+var API_KEY = 'mykey123';
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
@@ -93,12 +93,19 @@ function requestCheckSelected() {
       'muteHttpExceptions': true
     };
     var response = UrlFetchApp.fetch(SERVER_URL + '/check/selected', options);
-    var result = JSON.parse(response.getContentText());
+    var resultText = response.getContentText();
+    var msg = '';
+    try {
+      var result = JSON.parse(resultText);
+      msg = result.message || '요청 전송 완료';
+    } catch(err) {
+      msg = '요청 전송 완료';
+    }
 
     SpreadsheetApp.getUi().alert(
       '선택 키워드 확인 시작!\n\n' +
-      '• ' + keywords.join(', ') + '\n' +
-      '• ' + result.message
+      '• 키워드: ' + keywords.join(', ') + '\n' +
+      '• ' + msg
     );
   } catch (e) {
     SpreadsheetApp.getUi().alert('서버 연결 실패!\n\n' + e.message);
