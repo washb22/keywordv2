@@ -25,13 +25,13 @@ checking_lock = threading.Lock()
 is_checking = False
 
 
-def _fill_previous_values(results):
+def _fill_previous_values(results, sheet_name='키워드'):
     """스프레드시트의 E열(현재순위)을 D열(이전순위)로 이동 + 변동 계산"""
     spreadsheet = get_spreadsheet()
     if not spreadsheet:
         return
     try:
-        worksheet = spreadsheet.worksheet('키워드')
+        worksheet = spreadsheet.worksheet(sheet_name)
         all_values = worksheet.get_all_values()
         for r in results:
             row_idx = r['row'] - 1
@@ -57,7 +57,15 @@ def _fill_previous_values(results):
         print(f"[이전값] 읽기 실패: {e}")
 
 
-def do_check(keywords):
+def get_all_sheet_names():
+    """스프레드시트의 모든 시트 이름 반환"""
+    spreadsheet = get_spreadsheet()
+    if not spreadsheet:
+        return []
+    return [ws.title for ws in spreadsheet.worksheets()]
+
+
+def do_check(keywords, sheet_name='키워드'):
     """키워드 순위 체크 실행"""
     results = []
     for i, kw in enumerate(keywords, 1):
@@ -91,21 +99,21 @@ def do_check(keywords):
         if i < len(keywords):
             time.sleep(random.uniform(3, 6))
 
-    _fill_previous_values(results)
-    write_results(results)
+    _fill_previous_values(results, sheet_name)
+    write_results(results, sheet_name)
     return results
 
 
-def run_check_async(keywords, send_telegram=True):
+def run_check_async(keywords, send_telegram=True, sheet_name='키워드'):
     """백그라운드에서 순위 체크 실행"""
     global is_checking
     try:
-        results = do_check(keywords)
+        results = do_check(keywords, sheet_name)
         if send_telegram and results:
             send_report(results)
-        print(f"체크 완료: {len(results)}개 키워드")
+        print(f"[{sheet_name}] 체크 완료: {len(results)}개 키워드")
     except Exception as e:
-        print(f"체크 오류: {e}")
+        print(f"[{sheet_name}] 체크 오류: {e}")
     finally:
         is_checking = False
 
@@ -134,16 +142,19 @@ def check_all():
     if is_checking:
         return jsonify({'message': '이미 체크가 진행 중입니다. 잠시 후 다시 시도해주세요.'}), 429
 
-    keywords = read_keywords()
+    data = request.get_json() or {}
+    sheet_name = data.get('sheet_name', '키워드')
+
+    keywords = read_keywords(sheet_name)
     if not keywords:
-        return jsonify({'message': '체크할 키워드가 없습니다.'}), 404
+        return jsonify({'message': f'[{sheet_name}] 체크할 키워드가 없습니다.'}), 404
 
     is_checking = True
-    thread = threading.Thread(target=run_check_async, args=(keywords,))
+    thread = threading.Thread(target=run_check_async, args=(keywords, True, sheet_name))
     thread.start()
 
     return jsonify({
-        'message': f'{len(keywords)}개 키워드 순위 체크를 시작합니다. 완료되면 스프레드시트에 결과가 업데이트됩니다.',
+        'message': f'[{sheet_name}] {len(keywords)}개 키워드 순위 체크를 시작합니다.',
         'keyword_count': len(keywords)
     })
 
@@ -164,37 +175,55 @@ def check_selected():
     data = request.get_json() or {}
     start_row = data.get('start_row', 2)
     end_row = data.get('end_row', start_row)
+    sheet_name = data.get('sheet_name', '키워드')
 
-    all_keywords = read_keywords()
+    all_keywords = read_keywords(sheet_name)
     keywords = [kw for kw in all_keywords if start_row <= kw['row'] <= end_row]
 
     if not keywords:
         return jsonify({'message': '해당 행에 키워드가 없습니다.'}), 404
 
     is_checking = True
-    thread = threading.Thread(target=run_check_async, args=(keywords, False))
+    thread = threading.Thread(target=run_check_async, args=(keywords, False, sheet_name))
     thread.start()
 
     keyword_names = [kw['keyword'] for kw in keywords]
     return jsonify({
-        'message': f'{len(keywords)}개 키워드 체크를 시작합니다.',
+        'message': f'[{sheet_name}] {len(keywords)}개 키워드 체크를 시작합니다.',
         'keywords': keyword_names
     })
 
 
 def scheduled_check():
-    """매일 자동 순위 체크 (스케줄러에서 호출)"""
+    """매일 자동 순위 체크 - 모든 시트 순회"""
     global is_checking
     if is_checking:
         print("[스케줄러] 이미 체크 진행 중 - 스킵")
         return
     print(f"[스케줄러] 자동 순위 체크 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    keywords = read_keywords()
-    if not keywords:
-        print("[스케줄러] 키워드 없음")
+
+    sheet_names = get_all_sheet_names()
+    if not sheet_names:
+        print("[스케줄러] 시트 없음")
         return
+
+    all_results = []
     is_checking = True
-    run_check_async(keywords, send_telegram=True)
+    try:
+        for sheet_name in sheet_names:
+            keywords = read_keywords(sheet_name)
+            if not keywords:
+                continue
+            print(f"[스케줄러] [{sheet_name}] {len(keywords)}개 키워드 체크")
+            results = do_check(keywords, sheet_name)
+            all_results.extend(results)
+        if all_results:
+            send_report(all_results)
+        print(f"[스케줄러] 전체 완료: {len(all_results)}개 키워드")
+    except Exception as e:
+        print(f"[스케줄러] 오류: {e}")
+    finally:
+        is_checking = False
 
 
 # 스케줄러 설정 - 매일 새벽 6시(KST) = 21시(UTC)

@@ -14,6 +14,10 @@ function onOpen() {
     .addItem('👆 선택한 키워드만 확인', 'requestCheckSelected')
     .addSeparator()
     .addItem('📊 결과 서식 적용', 'applyFormatting')
+    .addSeparator()
+    .addItem('⏰ 매일 6시 자동 체크 설정', 'setupDailyTrigger')
+    .addItem('⏰ 자동 체크 해제', 'removeDailyTrigger')
+    .addSeparator()
     .addItem('🔄 시트 초기화', 'resetSheet')
     .addToUi();
 }
@@ -32,10 +36,14 @@ function requestCheckAll() {
     return;
   }
 
+  var sheetName = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet().getName();
+
   try {
+    var payload = { 'sheet_name': sheetName };
     var options = {
       'method': 'post',
       'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      'payload': JSON.stringify(payload),
       'muteHttpExceptions': true
     };
     var response = UrlFetchApp.fetch(SERVER_URL + '/check/all', options);
@@ -43,8 +51,9 @@ function requestCheckAll() {
 
     SpreadsheetApp.getUi().alert(
       '순위 확인 시작!\n\n' +
+      '• 시트: ' + sheetName + '\n' +
       '• ' + result.message + '\n' +
-      '• 잠시 후 스프레드시트에 결과가 업데이트됩니다.'
+      '• 잠시 후 결과가 업데이트됩니다.'
     );
   } catch (e) {
     SpreadsheetApp.getUi().alert('서버 연결 실패!\n\n' + e.message + '\n\n서버가 슬립 중일 수 있습니다. 30초 후 다시 시도해주세요.');
@@ -78,8 +87,10 @@ function requestCheckSelected() {
     return;
   }
 
+  var sheetName = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet().getName();
+
   try {
-    var payload = { 'start_row': startRow, 'end_row': endRow };
+    var payload = { 'start_row': startRow, 'end_row': endRow, 'sheet_name': sheetName };
     var options = {
       'method': 'post',
       'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
@@ -162,6 +173,83 @@ function applyFormatting() {
 
   sheet.setFrozenRows(1);
   SpreadsheetApp.getUi().alert('서식 적용 완료!');
+}
+
+// === 매일 새벽 6시 자동 체크 (트리거용) ===
+function dailyAutoCheck() {
+  try {
+    // 서버 깨우기 (슬립 상태일 수 있으므로)
+    try { UrlFetchApp.fetch(SERVER_URL + '/health', { 'muteHttpExceptions': true }); } catch(e) {}
+    Utilities.sleep(5000);
+
+    // 모든 시트를 순회하며 체크 요청
+    var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+    for (var i = 0; i < sheets.length; i++) {
+      var sheetName = sheets[i].getName();
+      var lastRow = sheets[i].getLastRow();
+      if (lastRow < 2) continue;  // 데이터 없는 시트 스킵
+
+      var payload = { 'sheet_name': sheetName };
+      var options = {
+        'method': 'post',
+        'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+        'payload': JSON.stringify(payload),
+        'muteHttpExceptions': true
+      };
+      var response = UrlFetchApp.fetch(SERVER_URL + '/check/all', options);
+      console.log('[' + sheetName + '] 체크 요청: ' + response.getContentText());
+
+      // 이전 시트 체크가 끝날 때까지 대기
+      Utilities.sleep(10000);
+      _waitForCheckComplete();
+    }
+  } catch (e) {
+    console.log('자동 체크 실패: ' + e.message);
+  }
+}
+
+function _waitForCheckComplete() {
+  // 서버가 체크 완료할 때까지 대기 (최대 30분)
+  for (var i = 0; i < 60; i++) {
+    Utilities.sleep(30000);  // 30초마다 확인
+    try {
+      var resp = UrlFetchApp.fetch(SERVER_URL + '/health', { 'muteHttpExceptions': true });
+      var data = JSON.parse(resp.getContentText());
+      if (!data.checking) return;
+    } catch(e) {}
+  }
+}
+
+// === 자동 체크 트리거 설정/해제 ===
+function setupDailyTrigger() {
+  // 기존 트리거 삭제
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'dailyAutoCheck') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  // 매일 새벽 6시 트리거 생성
+  ScriptApp.newTrigger('dailyAutoCheck')
+    .timeBased()
+    .atHour(6)
+    .everyDays(1)
+    .inTimezone('Asia/Seoul')
+    .create();
+
+  SpreadsheetApp.getUi().alert('매일 새벽 6시 자동 체크가 설정되었습니다!');
+}
+
+function removeDailyTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var count = 0;
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'dailyAutoCheck') {
+      ScriptApp.deleteTrigger(triggers[i]);
+      count++;
+    }
+  }
+  SpreadsheetApp.getUi().alert('자동 체크 트리거 ' + count + '개 삭제 완료');
 }
 
 function resetSheet() {
