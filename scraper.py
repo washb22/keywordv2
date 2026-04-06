@@ -181,12 +181,8 @@ def check_sections(driver, keyword, post_url, post_title):
     sections = driver.find_elements(By.CSS_SELECTOR, "#main_pack .sc_new")
     print(f"[{keyword}] {len(sections)}개 섹션 발견")
 
-    divider_y = get_divider_y(driver)
-    print(f"[{keyword}] 윗탭/아랫탭 경계 Y: {divider_y}")
-
     skip_titles = ["광고", "AI 브리핑", "브랜드", "가격비교", "쇼핑", "스토어"]
-    upper_rank = 0
-    lower_rank = 0
+    rank = 0
 
     for section in sections:
         try:
@@ -198,26 +194,15 @@ def check_sections(driver, keyword, post_url, post_title):
             section_title = extract_section_title(section)
             if any(sk in section_title for sk in skip_titles):
                 continue
-            section_y = section.location['y']
-            is_upper = divider_y is not None and section_y < divider_y
 
             post_links = extract_post_links(section)
-            if is_upper:
-                for link_idx, (href, text) in enumerate(post_links):
-                    upper_rank += 1
-                    if url_or_title_matches(post_url, post_title, href, text):
-                        print(f"[{keyword}] 윗탭 {upper_rank}위에서 발견! (섹션 '{section_title}' {link_idx+1}번째 글)")
-                        return ("윗탭", upper_rank, "윗탭")
-                if not post_links:
-                    upper_rank += 1
-            else:
-                for link_idx, (href, text) in enumerate(post_links):
-                    lower_rank += 1
-                    if url_or_title_matches(post_url, post_title, href, text):
-                        print(f"[{keyword}] 아랫탭 {lower_rank}위에서 발견! (섹션 '{section_title}' {link_idx+1}번째 글)")
-                        return ("아랫탭", lower_rank, "아랫탭")
-                if not post_links:
-                    lower_rank += 1
+            for link_idx, (href, text) in enumerate(post_links):
+                rank += 1
+                if url_or_title_matches(post_url, post_title, href, text):
+                    print(f"[{keyword}] 통합 {rank}위에서 발견! (섹션 '{section_title}' {link_idx+1}번째 글)")
+                    return ("노출", rank, section_title)
+            if not post_links:
+                rank += 1
         except Exception:
             continue
     return None
