@@ -213,7 +213,6 @@ def check_sections(driver, keyword, post_url, post_title):
     print(f"[{keyword}] {len(sections)}개 섹션 발견")
 
     skip_titles = ["광고", "AI 브리핑", "브랜드", "가격비교", "쇼핑", "스토어"]
-    rank = 0
 
     for section in sections:
         try:
@@ -227,13 +226,14 @@ def check_sections(driver, keyword, post_url, post_title):
                 continue
 
             post_links = extract_post_links(section)
-            for link_idx, (href, text) in enumerate(post_links):
-                rank += 1
-                if url_or_title_matches(post_url, post_title, href, text):
-                    print(f"[{keyword}] 통합 {rank}위에서 발견! (섹션 '{section_title}' {link_idx+1}번째 글)")
-                    return ("노출", rank, section_title)
             if not post_links:
-                rank += 1
+                continue  # 글이 없는 섹션은 무시
+
+            # 섹션 내 순위로 매칭 (사용자가 보는 순위 = 섹션 내 N번째)
+            for section_rank, (href, text) in enumerate(post_links, 1):
+                if url_or_title_matches(post_url, post_title, href, text):
+                    print(f"[{keyword}] '{section_title}' {section_rank}위에서 발견!")
+                    return ("노출", section_rank, section_title)
         except Exception:
             continue
     return None
