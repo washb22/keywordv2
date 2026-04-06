@@ -14,10 +14,16 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 from sheet import read_keywords, write_results, get_spreadsheet
 from scraper import run_check
 from telegram_notify import send_report
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import random
 import time
 import re
+
+KST = timezone(timedelta(hours=9))
+
+
+def now_kst():
+    return datetime.now(KST)
 
 app = Flask(__name__)
 
@@ -94,7 +100,7 @@ def do_check(keywords, sheet_name='키워드'):
             'section': section,
             'prev_rank_display': '',
             'change': '',
-            'checked_at': datetime.now().strftime('%Y-%m-%d %H:%M')
+            'checked_at': now_kst().strftime('%Y-%m-%d %H:%M')
         })
 
         if i < len(keywords):
@@ -214,7 +220,7 @@ def check_selected():
 
 def scheduled_check():
     """매일 자동 순위 체크 - 모든 시트를 큐에 추가"""
-    print(f"[스케줄러] 자동 순위 체크 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[스케줄러] 자동 순위 체크 시작: {now_kst().strftime('%Y-%m-%d %H:%M:%S')}")
     sheet_names = get_all_sheet_names()
     if not sheet_names:
         print("[스케줄러] 시트 없음")

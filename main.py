@@ -8,7 +8,13 @@ import os
 import sys
 import time
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+KST = timezone(timedelta(hours=9))
+
+
+def now_kst():
+    return datetime.now(KST)
 from dotenv import load_dotenv
 
 # .env 로드
@@ -23,7 +29,7 @@ import random
 def check_all_keywords():
     """전체 키워드 순위 체크 + 스프레드시트 기록 + 텔레그램 알림"""
     print(f"\n{'='*50}")
-    print(f"순위 체크 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"순위 체크 시작: {now_kst().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}\n")
 
     keywords = read_keywords()
@@ -61,7 +67,7 @@ def check_all_keywords():
             'section': section,
             'prev_rank_display': '',
             'change': '',
-            'checked_at': datetime.now().strftime('%Y-%m-%d %H:%M')
+            'checked_at': now_kst().strftime('%Y-%m-%d %H:%M')
         }
         results.append(result)
 
@@ -83,7 +89,7 @@ def check_all_keywords():
     send_report(results)
 
     print(f"\n{'='*50}")
-    print(f"순위 체크 완료: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"순위 체크 완료: {now_kst().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"총 {len(results)}개 키워드 처리")
     print(f"{'='*50}\n")
 
@@ -129,7 +135,7 @@ def check_selected_keywords(start_row, end_row):
             'section': section,
             'prev_rank_display': '',
             'change': '',
-            'checked_at': datetime.now().strftime('%Y-%m-%d %H:%M')
+            'checked_at': now_kst().strftime('%Y-%m-%d %H:%M')
         }
         results.append(result)
 
@@ -197,14 +203,14 @@ def watch_mode():
         try:
             flag = check_request_flag()
             if flag == 'all':
-                print(f"\n[감지] 전체 체크 요청! ({datetime.now().strftime('%H:%M:%S')})")
+                print(f"\n[감지] 전체 체크 요청! ({now_kst().strftime('%H:%M:%S')})")
                 check_all_keywords()
             elif isinstance(flag, tuple):
                 start_row, end_row = flag
-                print(f"\n[감지] 선택 체크 요청 ({start_row}~{end_row}행) ({datetime.now().strftime('%H:%M:%S')})")
+                print(f"\n[감지] 선택 체크 요청 ({start_row}~{end_row}행) ({now_kst().strftime('%H:%M:%S')})")
                 check_selected_keywords(start_row, end_row)
             else:
-                print(f"[대기중] {datetime.now().strftime('%H:%M:%S')} - 요청 없음", end='\r')
+                print(f"[대기중] {now_kst().strftime('%H:%M:%S')} - 요청 없음", end='\r')
 
             time.sleep(300)  # 5분 간격
         except KeyboardInterrupt:
