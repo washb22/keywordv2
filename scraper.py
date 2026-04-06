@@ -201,24 +201,23 @@ def check_sections(driver, keyword, post_url, post_title):
             section_y = section.location['y']
             is_upper = divider_y is not None and section_y < divider_y
 
+            post_links = extract_post_links(section)
             if is_upper:
-                upper_rank += 1
-                post_links = extract_post_links(section)
-                if post_links:
-                    # 첫 번째(메인) 링크만 순위로 인정
-                    # 섹션 카드 안의 서브 링크(작은 관련글)는 무시
-                    href, text = post_links[0]
+                for link_idx, (href, text) in enumerate(post_links):
+                    upper_rank += 1
                     if url_or_title_matches(post_url, post_title, href, text):
-                        print(f"[{keyword}] 윗탭 {upper_rank}위에서 발견!")
+                        print(f"[{keyword}] 윗탭 {upper_rank}위에서 발견! (섹션 '{section_title}' {link_idx+1}번째 글)")
                         return ("윗탭", upper_rank, "윗탭")
+                if not post_links:
+                    upper_rank += 1
             else:
-                lower_rank += 1
-                post_links = extract_post_links(section)
-                if post_links:
-                    href, text = post_links[0]
+                for link_idx, (href, text) in enumerate(post_links):
+                    lower_rank += 1
                     if url_or_title_matches(post_url, post_title, href, text):
-                        print(f"[{keyword}] 아랫탭 {lower_rank}위에서 발견!")
+                        print(f"[{keyword}] 아랫탭 {lower_rank}위에서 발견! (섹션 '{section_title}' {link_idx+1}번째 글)")
                         return ("아랫탭", lower_rank, "아랫탭")
+                if not post_links:
+                    lower_rank += 1
         except Exception:
             continue
     return None
