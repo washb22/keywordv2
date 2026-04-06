@@ -132,9 +132,45 @@ def extract_section_title(section):
 
 
 def extract_post_links(section):
+    """섹션에서 메인 게시글 제목 링크만 추출 (댓글/답변 미리보기 제외)"""
     results = []
     seen_hrefs = set()
+
+    # 1순위: 네이버 통합검색 메인 제목 셀렉터 (가장 정확)
+    title_selectors = [
+        ".title_link",                    # 최신 네이버 UI
+        ".api_txt_lines.total_tit a",     # VIEW 탭
+        ".sub_txt.sub_name a",            # 카페/블로그
+        "a.title_area",                   # 일부 섹션
+    ]
+
     try:
+        # 메인 제목 링크 후보 수집
+        title_links = []
+        for sel in title_selectors:
+            title_links.extend(section.find_elements(By.CSS_SELECTOR, sel))
+
+        if title_links:
+            for link in title_links:
+                try:
+                    if not link.is_displayed():
+                        continue
+                    href = link.get_attribute("href") or ""
+                    text = link.text.strip()
+                    if not is_content_url(href):
+                        continue
+                    if href in seen_hrefs:
+                        continue
+                    if len(text) > 5:
+                        seen_hrefs.add(href)
+                        results.append((href, text))
+                except Exception:
+                    continue
+            if results:
+                return results
+
+        # 2순위: 제목 셀렉터가 안 먹히면 폰트 크기로 구분
+        # 메인 제목은 보통 16px 이상, 댓글/답변 미리보기는 13~14px
         all_links = section.find_elements(By.CSS_SELECTOR,
             "a[href*='blog.naver.com'], "
             "a[href*='cafe.naver.com'], "
@@ -152,9 +188,16 @@ def extract_post_links(section):
                     continue
                 if href in seen_hrefs:
                     continue
-                if len(text) > 5:
-                    seen_hrefs.add(href)
-                    results.append((href, text))
+                if len(text) <= 5:
+                    continue
+                # 폰트 크기 체크 - 작은 댓글/답변 링크 제외
+                font_size = link.value_of_css_property("font-size")
+                if font_size:
+                    size_px = float(font_size.replace("px", ""))
+                    if size_px < 15:
+                        continue
+                seen_hrefs.add(href)
+                results.append((href, text))
             except Exception:
                 continue
     except Exception as e:
