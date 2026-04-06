@@ -162,6 +162,58 @@ def extract_post_links(section):
     return results
 
 
+def _filter_card_titles(section):
+    """인기글 묶음 섹션에서 카드별 메인 제목만 추출 (댓글/답변/관련글 제외)
+
+    카드 구분: 15px 폰트 = 카페/블로그 이름 = 새 카드 시작
+    각 카드에서 첫 번째 콘텐츠 링크만 게시글 제목으로 인정
+    """
+    results = []
+    seen_hrefs = set()
+    card_found = False
+
+    try:
+        all_links = section.find_elements(By.CSS_SELECTOR,
+            "a[href*='blog.naver.com'], "
+            "a[href*='cafe.naver.com'], "
+            "a[href*='in.naver.com/'], "
+            "a[href*='post.naver.com'], "
+            "a[href*='kin.naver.com']"
+        )
+        for link in all_links:
+            try:
+                if not link.is_displayed():
+                    continue
+                href = link.get_attribute("href") or ""
+                text = link.text.strip()
+                if not text or len(text) < 3:
+                    continue
+
+                font_size = link.value_of_css_property("font-size")
+                size_px = float(font_size.replace("px", "")) if font_size else 13
+
+                if size_px >= 15:
+                    card_found = False
+                    continue
+
+                if card_found:
+                    continue
+
+                if not is_content_url(href):
+                    continue
+                if href in seen_hrefs:
+                    continue
+                if len(text) > 5:
+                    seen_hrefs.add(href)
+                    results.append((href, text))
+                    card_found = True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return results
+
+
 def get_divider_y(driver):
     for selector in ['.spw_fsolid._fsolid_body', '.spw_fsolid._fsolid_head']:
         try:
@@ -203,19 +255,33 @@ def check_sections(driver, keyword, post_url, post_title):
 
             post_links = extract_post_links(section)
 
-            # 순위 카운트: 콘텐츠가 있는 섹션은 무조건 1순위 차지
+            # 순위 카운트
             if is_upper:
                 upper_rank += 1
-                for href, text in post_links:
-                    if url_or_title_matches(post_url, post_title, href, text):
-                        print(f"[{keyword}] 윗탭 {upper_rank}위에서 발견! (섹션: {section_title})")
-                        return ("윗탭", upper_rank, "윗탭")
             else:
                 lower_rank += 1
-                for href, text in post_links:
-                    if url_or_title_matches(post_url, post_title, href, text):
-                        print(f"[{keyword}] 아랫탭 {lower_rank}위에서 발견! (섹션: {section_title})")
-                        return ("아랫탭", lower_rank, "아랫탭")
+
+            # 인기글 묶음 섹션 vs 개별 섹션 판별
+            is_grouped = "인기글" in section_title
+
+            # 인기글 묶음 섹션은 카드별 메인 글만 추출 (댓글/관련글 제외)
+            if is_grouped:
+                post_links = _filter_card_titles(section)
+
+            for link_idx, (href, text) in enumerate(post_links):
+                if url_or_title_matches(post_url, post_title, href, text):
+                    tab = "윗탭" if is_upper else "아랫탭"
+                    tab_rank = upper_rank if is_upper else lower_rank
+
+                    if is_grouped:
+                        # 인기글 묶음: 섹션명 + 섹션 내 순위
+                        in_rank = link_idx + 1
+                        print(f"[{keyword}] '{section_title}' {in_rank}위에서 발견!")
+                        return (section_title, in_rank, section_title)
+                    else:
+                        # 개별 섹션: 통합검색 순위
+                        print(f"[{keyword}] {tab} {tab_rank}위에서 발견!")
+                        return (tab, tab_rank, tab)
         except Exception:
             continue
     return None
