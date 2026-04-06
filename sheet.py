@@ -35,14 +35,15 @@ def get_client():
         return None
 
 
-def get_spreadsheet():
-    """스프레드시트 객체 반환"""
+def get_spreadsheet(spreadsheet_id=None):
+    """스프레드시트 객체 반환. spreadsheet_id 지정 시 해당 시트, 미지정 시 env 기본값"""
     client = get_client()
     if not client:
         return None
-    spreadsheet_id = os.environ.get('GOOGLE_SPREADSHEET_ID', '')
     if not spreadsheet_id:
-        print("[시트] GOOGLE_SPREADSHEET_ID 환경변수 없음")
+        spreadsheet_id = os.environ.get('GOOGLE_SPREADSHEET_ID', '')
+    if not spreadsheet_id:
+        print("[시트] GOOGLE_SPREADSHEET_ID 없음")
         return None
     try:
         return client.open_by_key(spreadsheet_id)
@@ -51,13 +52,13 @@ def get_spreadsheet():
         return None
 
 
-def read_keywords(sheet_name='키워드'):
+def read_keywords(sheet_name='키워드', spreadsheet_id=None):
     """스프레드시트에서 키워드 목록 읽기
 
     Returns:
         list of dict: [{'priority': '상', 'keyword': '...', 'title': '...', 'url': '...', 'row': 2}, ...]
     """
-    spreadsheet = get_spreadsheet()
+    spreadsheet = get_spreadsheet(spreadsheet_id)
     if not spreadsheet:
         return []
 
@@ -94,13 +95,13 @@ def read_keywords(sheet_name='키워드'):
     return keywords
 
 
-def write_results(results, sheet_name='키워드'):
+def write_results(results, sheet_name='키워드', spreadsheet_id=None):
     """순위 체크 결과를 스프레드시트에 기록
 
     Args:
         results: list of dict with keys: row, prev_status, prev_rank, status, rank, change, checked_at
     """
-    spreadsheet = get_spreadsheet()
+    spreadsheet = get_spreadsheet(spreadsheet_id)
     if not spreadsheet:
         return False
 

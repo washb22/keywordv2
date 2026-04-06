@@ -32,9 +32,9 @@ task_queue = queue.Queue()
 current_task = None  # 현재 진행 중인 작업 정보
 
 
-def _fill_previous_values(results, sheet_name='키워드'):
+def _fill_previous_values(results, sheet_name='키워드', spreadsheet_id=None):
     """스프레드시트의 E열(현재순위)을 D열(이전순위)로 이동 + 변동 계산"""
-    spreadsheet = get_spreadsheet()
+    spreadsheet = get_spreadsheet(spreadsheet_id)
     if not spreadsheet:
         return
     try:
@@ -72,7 +72,7 @@ def get_all_sheet_names():
     return [ws.title for ws in spreadsheet.worksheets()]
 
 
-def do_check(keywords, sheet_name='키워드'):
+def do_check(keywords, sheet_name='키워드', spreadsheet_id=None):
     """키워드 순위 체크 실행"""
     results = []
     for i, kw in enumerate(keywords, 1):
@@ -106,8 +106,8 @@ def do_check(keywords, sheet_name='키워드'):
         if i < len(keywords):
             time.sleep(random.uniform(3, 6))
 
-    _fill_previous_values(results, sheet_name)
-    write_results(results, sheet_name)
+    _fill_previous_values(results, sheet_name, spreadsheet_id=spreadsheet_id)
+    write_results(results, sheet_name, spreadsheet_id=spreadsheet_id)
     return results
 
 
@@ -122,8 +122,10 @@ def queue_worker():
             sheet_name = task['sheet_name']
             send_telegram = task.get('send_telegram', False)
 
+            spreadsheet_id = task.get('spreadsheet_id', '')
+
             print(f"[큐] [{sheet_name}] {len(keywords)}개 키워드 체크 시작 (대기열: {task_queue.qsize()}개 남음)")
-            results = do_check(keywords, sheet_name)
+            results = do_check(keywords, sheet_name, spreadsheet_id=spreadsheet_id or None)
             if send_telegram and results:
                 send_report(results)
             print(f"[큐] [{sheet_name}] 체크 완료")
@@ -163,14 +165,16 @@ def check_all():
 
     data = request.get_json() or {}
     sheet_name = data.get('sheet_name', '키워드')
+    spreadsheet_id = data.get('spreadsheet_id', '')  # 외부 시트 지원
 
-    keywords = read_keywords(sheet_name)
+    keywords = read_keywords(sheet_name, spreadsheet_id=spreadsheet_id or None)
     if not keywords:
         return jsonify({'message': f'[{sheet_name}] 체크할 키워드가 없습니다.'}), 404
 
     task_queue.put({
         'keywords': keywords,
         'sheet_name': sheet_name,
+        'spreadsheet_id': spreadsheet_id,
         'send_telegram': True
     })
 
@@ -195,8 +199,9 @@ def check_selected():
     start_row = data.get('start_row', 2)
     end_row = data.get('end_row', start_row)
     sheet_name = data.get('sheet_name', '키워드')
+    spreadsheet_id = data.get('spreadsheet_id', '')
 
-    all_keywords = read_keywords(sheet_name)
+    all_keywords = read_keywords(sheet_name, spreadsheet_id=spreadsheet_id or None)
     keywords = [kw for kw in all_keywords if start_row <= kw['row'] <= end_row]
 
     if not keywords:
@@ -205,6 +210,7 @@ def check_selected():
     task_queue.put({
         'keywords': keywords,
         'sheet_name': sheet_name,
+        'spreadsheet_id': spreadsheet_id,
         'send_telegram': False
     })
 

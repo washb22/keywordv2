@@ -34,7 +34,7 @@ function requestCheckAll() {
   }
 
   try {
-    var payload = { 'sheet_name': sheetName };
+    var payload = { 'sheet_name': sheetName, 'spreadsheet_id': SpreadsheetApp.getActiveSpreadsheet().getId() };
     var options = {
       'method': 'post',
       'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
@@ -85,7 +85,7 @@ function requestCheckSelected() {
   }
 
   try {
-    var payload = { 'start_row': validStartRow, 'end_row': validEndRow, 'sheet_name': sheetName };
+    var payload = { 'start_row': validStartRow, 'end_row': validEndRow, 'sheet_name': sheetName, 'spreadsheet_id': SpreadsheetApp.getActiveSpreadsheet().getId() };
     var options = {
       'method': 'post',
       'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
@@ -190,7 +190,7 @@ function dailyAutoCheck() {
       var lastRow = sheets[i].getLastRow();
       if (lastRow < 2) continue;  // 데이터 없는 시트 스킵
 
-      var payload = { 'sheet_name': sheetName };
+      var payload = { 'sheet_name': sheetName, 'spreadsheet_id': SpreadsheetApp.getActiveSpreadsheet().getId() };
       var options = {
         'method': 'post',
         'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
