@@ -132,45 +132,15 @@ def extract_section_title(section):
 
 
 def extract_post_links(section):
-    """섹션에서 메인 게시글 제목 링크만 추출 (댓글/답변 미리보기 제외)"""
+    """섹션에서 메인 게시글 제목 링크만 추출 (댓글/답변/관련글 제외)
+
+    카드 구조: [15px 카페/블로그 이름] → [13px 제목] → [13px 본문/댓글/관련글]
+    각 카드에서 첫 번째 콘텐츠 링크만 순위로 인정.
+    """
     results = []
     seen_hrefs = set()
 
-    # 1순위: 네이버 통합검색 메인 제목 셀렉터 (가장 정확)
-    title_selectors = [
-        ".title_link",                    # 최신 네이버 UI
-        ".api_txt_lines.total_tit a",     # VIEW 탭
-        ".sub_txt.sub_name a",            # 카페/블로그
-        "a.title_area",                   # 일부 섹션
-    ]
-
     try:
-        # 메인 제목 링크 후보 수집
-        title_links = []
-        for sel in title_selectors:
-            title_links.extend(section.find_elements(By.CSS_SELECTOR, sel))
-
-        if title_links:
-            for link in title_links:
-                try:
-                    if not link.is_displayed():
-                        continue
-                    href = link.get_attribute("href") or ""
-                    text = link.text.strip()
-                    if not is_content_url(href):
-                        continue
-                    if href in seen_hrefs:
-                        continue
-                    if len(text) > 5:
-                        seen_hrefs.add(href)
-                        results.append((href, text))
-                except Exception:
-                    continue
-            if results:
-                return results
-
-        # 2순위: 제목 셀렉터가 안 먹히면 폰트 크기로 구분
-        # 메인 제목은 보통 16px 이상, 댓글/답변 미리보기는 13~14px
         all_links = section.find_elements(By.CSS_SELECTOR,
             "a[href*='blog.naver.com'], "
             "a[href*='cafe.naver.com'], "
@@ -178,26 +148,44 @@ def extract_post_links(section):
             "a[href*='post.naver.com'], "
             "a[href*='kin.naver.com']"
         )
+
+        card_found_content = False  # 현재 카드에서 이미 제목을 찾았는지
+
         for link in all_links:
             try:
                 if not link.is_displayed():
                     continue
                 href = link.get_attribute("href") or ""
                 text = link.text.strip()
+                if not text or len(text) < 3:
+                    continue
+
+                # 15px 링크 = 카페/블로그 이름 (새 카드 시작)
+                font_size = link.value_of_css_property("font-size")
+                size_px = float(font_size.replace("px", "")) if font_size else 13
+
+                if size_px >= 15:
+                    # 새 카드 시작 - 다음 콘텐츠 링크가 이 카드의 제목
+                    card_found_content = False
+                    continue
+
+                # 이미 이 카드의 제목을 찾았으면 나머지(본문/댓글/관련글) 무시
+                if card_found_content:
+                    continue
+
+                # 콘텐츠 URL인지 체크
                 if not is_content_url(href):
                     continue
+
+                # 같은 href 중복 방지
                 if href in seen_hrefs:
                     continue
-                if len(text) <= 5:
-                    continue
-                # 폰트 크기 체크 - 작은 댓글/답변 링크 제외
-                font_size = link.value_of_css_property("font-size")
-                if font_size:
-                    size_px = float(font_size.replace("px", ""))
-                    if size_px < 15:
-                        continue
-                seen_hrefs.add(href)
-                results.append((href, text))
+
+                if len(text) > 5:
+                    seen_hrefs.add(href)
+                    results.append((href, text))
+                    card_found_content = True  # 이 카드의 제목 찾음, 나머지 스킵
+
             except Exception:
                 continue
     except Exception as e:
