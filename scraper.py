@@ -132,14 +132,8 @@ def extract_section_title(section):
 
 
 def extract_post_links(section):
-    """섹션에서 메인 게시글 제목 링크만 추출 (댓글/답변/관련글 제외)
-
-    카드 구조: [15px 카페/블로그 이름] → [13px 제목] → [13px 본문/댓글/관련글]
-    각 카드에서 첫 번째 콘텐츠 링크만 순위로 인정.
-    """
     results = []
     seen_hrefs = set()
-
     try:
         all_links = section.find_elements(By.CSS_SELECTOR,
             "a[href*='blog.naver.com'], "
@@ -148,44 +142,19 @@ def extract_post_links(section):
             "a[href*='post.naver.com'], "
             "a[href*='kin.naver.com']"
         )
-
-        card_found_content = False  # 현재 카드에서 이미 제목을 찾았는지
-
         for link in all_links:
             try:
                 if not link.is_displayed():
                     continue
                 href = link.get_attribute("href") or ""
                 text = link.text.strip()
-                if not text or len(text) < 3:
-                    continue
-
-                # 15px 링크 = 카페/블로그 이름 (새 카드 시작)
-                font_size = link.value_of_css_property("font-size")
-                size_px = float(font_size.replace("px", "")) if font_size else 13
-
-                if size_px >= 15:
-                    # 새 카드 시작 - 다음 콘텐츠 링크가 이 카드의 제목
-                    card_found_content = False
-                    continue
-
-                # 이미 이 카드의 제목을 찾았으면 나머지(본문/댓글/관련글) 무시
-                if card_found_content:
-                    continue
-
-                # 콘텐츠 URL인지 체크
                 if not is_content_url(href):
                     continue
-
-                # 같은 href 중복 방지
                 if href in seen_hrefs:
                     continue
-
                 if len(text) > 5:
                     seen_hrefs.add(href)
                     results.append((href, text))
-                    card_found_content = True  # 이 카드의 제목 찾음, 나머지 스킵
-
             except Exception:
                 continue
     except Exception as e:
@@ -212,7 +181,12 @@ def check_sections(driver, keyword, post_url, post_title):
     sections = driver.find_elements(By.CSS_SELECTOR, "#main_pack .sc_new")
     print(f"[{keyword}] {len(sections)}개 섹션 발견")
 
+    divider_y = get_divider_y(driver)
+    print(f"[{keyword}] 윗탭/아랫탭 경계 Y: {divider_y}")
+
     skip_titles = ["광고", "AI 브리핑", "브랜드", "가격비교", "쇼핑", "스토어"]
+    upper_rank = 0
+    lower_rank = 0
 
     for section in sections:
         try:
@@ -224,16 +198,24 @@ def check_sections(driver, keyword, post_url, post_title):
             section_title = extract_section_title(section)
             if any(sk in section_title for sk in skip_titles):
                 continue
+            section_y = section.location['y']
+            is_upper = divider_y is None or section_y < divider_y
 
             post_links = extract_post_links(section)
-            if not post_links:
-                continue  # 글이 없는 섹션은 무시
 
-            # 섹션 내 순위로 매칭 (사용자가 보는 순위 = 섹션 내 N번째)
-            for section_rank, (href, text) in enumerate(post_links, 1):
-                if url_or_title_matches(post_url, post_title, href, text):
-                    print(f"[{keyword}] '{section_title}' {section_rank}위에서 발견!")
-                    return ("노출", section_rank, section_title)
+            # 순위 카운트: 콘텐츠가 있는 섹션은 무조건 1순위 차지
+            if is_upper:
+                upper_rank += 1
+                for href, text in post_links:
+                    if url_or_title_matches(post_url, post_title, href, text):
+                        print(f"[{keyword}] 윗탭 {upper_rank}위에서 발견! (섹션: {section_title})")
+                        return ("윗탭", upper_rank, "윗탭")
+            else:
+                lower_rank += 1
+                for href, text in post_links:
+                    if url_or_title_matches(post_url, post_title, href, text):
+                        print(f"[{keyword}] 아랫탭 {lower_rank}위에서 발견! (섹션: {section_title})")
+                        return ("아랫탭", lower_rank, "아랫탭")
         except Exception:
             continue
     return None
