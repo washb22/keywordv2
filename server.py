@@ -142,52 +142,131 @@ def do_check(keywords, sheet_name='키워드', spreadsheet_id=None, is_full_chec
     return results
 
 
+def _rank_priority(status_str):
+    """순위 우선순위 계산 (낮을수록 좋음). best rank 비교용."""
+    import re
+    if not status_str or status_str == '미노출':
+        return 999999
+    m = re.match(r'윗탭\s*(\d+)위', status_str)
+    if m:
+        return 10000 + int(m.group(1))
+    if '인기글' in status_str:
+        m = re.search(r'(\d+)위', status_str)
+        if m:
+            return 20000 + int(m.group(1))
+        return 29999
+    m = re.match(r'아랫탭\s*(\d+)위', status_str)
+    if m:
+        return 30000 + int(m.group(1))
+    return 50000
+
+
 def _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet_id, is_full_check=False):
-    """작업현황 표 생성 및 J~P열 기록 (카페는 순위체크 시 이미 수집됨)"""
-    print(f"[작업현황] [{sheet_name}] 집계 시작... (full={is_full_check})", flush=True)
+    """작업현황 표 업데이트 (J열 타겟 키워드 매칭 방식):
+    - J열의 타겟 키워드는 사용자가 수동 관리 (건드리지 않음)
+    - A열 체크 결과를 J열 타겟에 매칭하여 K~P 업데이트
+    - 같은 키워드에 여러 작업글 있으면 best rank 선택
+    - 매칭 안 되는 J열 키워드는 ❌ 누락 (작업 필요 표시)
+    """
+    print(f"[작업현황] [{sheet_name}] J열 타겟 매칭 모드", flush=True)
 
-    # 키워드별 고유 목록
-    unique_keywords = []
-    seen = set()
-    for kw in keywords:
-        k = kw['keyword']
-        if k and k not in seen:
-            seen.add(k)
-            unique_keywords.append(k)
+    # 1. 체크 결과를 keyword → best_result 맵으로 정리
+    best_by_keyword = {}
+    for r in results:
+        kw = r['keyword']
+        current_rank = r.get('status', '')
+        prio = _rank_priority(current_rank)
+        if kw not in best_by_keyword or prio < best_by_keyword[kw]['_prio']:
+            best_by_keyword[kw] = {
+                'current_rank': current_rank,
+                '_prio': prio,
+            }
 
-    # 검색량 (네이버 광고 API)
+    # 2. 시트의 J열 타겟 키워드 리스트 읽기
+    spreadsheet = get_spreadsheet(spreadsheet_id)
+    if not spreadsheet:
+        print("[작업현황] 시트 연결 실패", flush=True)
+        return
+    try:
+        worksheet = spreadsheet.worksheet(sheet_name)
+    except Exception as e:
+        print(f"[작업현황] 시트 '{sheet_name}' 없음: {e}", flush=True)
+        return
+
+    try:
+        j_col = worksheet.col_values(10)  # J열
+    except Exception as e:
+        print(f"[작업현황] J열 읽기 실패: {e}", flush=True)
+        return
+
+    # J2부터가 타겟 키워드 (J1은 헤더)
+    target_keywords = []  # [(row_num, keyword)]
+    for idx, val in enumerate(j_col[1:], start=2):
+        k = (val or '').strip()
+        if k and k != '키워드':
+            target_keywords.append((idx, k))
+
+    if not target_keywords:
+        print("[작업현황] J열에 타겟 키워드 없음 - J2부터 수동으로 키워드 입력 필요", flush=True)
+        return
+
+    print(f"[작업현황] J열 타겟 {len(target_keywords)}개 발견", flush=True)
+
+    # 3. 검색량 조회 (타겟 키워드 전체)
     volume_map = {}
-    for k in unique_keywords:
-        volume_map[k] = get_search_volume(k)
+    for _, k in target_keywords:
+        if k not in volume_map:
+            volume_map[k] = get_search_volume(k)
     print(f"[작업현황] 검색량 {len(volume_map)}개 조회 완료", flush=True)
 
+    # 4. 각 타겟 키워드에 매칭 + K~P 행 생성
+    # 선택 체크(is_full_check=False) 시에는 결과에 없는 J열 행은 건드리지 않음 (기존값 유지)
     status_rows = []
-    for r in results:
-        keyword = r['keyword']
-        current_rank = r.get('status', '')
-        if current_rank == '미노출' or not current_rank:
+    matched_count = 0
+    skipped_count = 0
+    for row_num, target_kw in target_keywords:
+        matched = best_by_keyword.get(target_kw)
+
+        if not matched and not is_full_check:
+            # 선택 체크인데 이번 결과에 없는 키워드 → 스킵 (기존 K~P 값 유지)
+            skipped_count += 1
+            continue
+
+        if matched:
+            current_rank = matched['current_rank']
+            if current_rank == '미노출' or not current_rank:
+                state_label = '❌ 누락'
+                rank_display = ''
+            elif '아랫탭' in current_rank:
+                state_label = '⚠️ 하위탭'
+                rank_display = current_rank
+            elif '인기글' in current_rank:
+                state_label = '⚠️ 인기글'
+                rank_display = current_rank
+            else:
+                state_label = '✅ 잡힘'
+                rank_display = current_rank
+            matched_count += 1
+        else:
+            # 전체 체크일 때: 매칭 안 된 건 누락으로 표시
             state_label = '❌ 누락'
             rank_display = ''
-        elif '아랫탭' in current_rank or '인기글' in current_rank:
-            state_label = '⚠️ 하위탭'
-            rank_display = current_rank
-        else:
-            state_label = '✅ 잡힘'
-            rank_display = current_rank
 
         status_rows.append({
-            'row': r.get('row'),  # 원본 시트 행 번호 (A열 기준)
-            'keyword': keyword,
-            'volume': volume_map.get(keyword, 0),
-            'cafes': cafe_map.get(keyword, []),
+            'row': row_num,
+            'keyword': target_kw,
+            'volume': volume_map.get(target_kw, 0),
+            'cafes': cafe_map.get(target_kw, []),
             'current_rank': rank_display,
             'status': state_label,
         })
 
+    mode = '전체' if is_full_check else '선택'
+    print(f"[작업현황] {mode} 매칭 {matched_count}개 업데이트 (스킵 {skipped_count}개)", flush=True)
+
     write_status_section(
         status_rows, sheet_name,
         spreadsheet_id=spreadsheet_id or None,
-        clear_all=is_full_check,
     )
 
 
