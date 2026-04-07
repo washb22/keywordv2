@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 from sheet import read_keywords, write_results, get_spreadsheet, write_status_section
-from scraper import run_check, get_top_cafes, create_driver
+from scraper import run_check
 from telegram_notify import send_report
 from naver_ad_api import get_search_volume
 from datetime import datetime, timezone, timedelta
@@ -74,15 +74,20 @@ def get_all_sheet_names():
 
 
 def do_check(keywords, sheet_name='키워드', spreadsheet_id=None):
-    """키워드 순위 체크 실행"""
+    """키워드 순위 체크 실행 - 순위 + 상위 카페 3개 동시 추출"""
     results = []
+    cafe_map = {}  # 키워드 → 상위 카페 리스트 (캐시)
     for i, kw in enumerate(keywords, 1):
         print(f"[{sheet_name}] [{i}/{len(keywords)}] '{kw['keyword']}' 체크 중...", flush=True)
         try:
-            status, rank, section = run_check(kw['keyword'], kw['url'], kw['title'])
+            status, rank, section, top_cafes = run_check(kw['keyword'], kw['url'], kw['title'])
         except Exception as e:
             print(f"  오류: {e}", flush=True)
-            status, rank, section = '확인 실패', 999, None
+            status, rank, section, top_cafes = '확인 실패', 999, None, []
+
+        # 같은 키워드는 이미 캐시된 카페 우선 사용
+        if kw['keyword'] not in cafe_map or not cafe_map[kw['keyword']]:
+            cafe_map[kw['keyword']] = top_cafes
 
         if status == '노출X':
             status_display = '미노출'
@@ -105,22 +110,22 @@ def do_check(keywords, sheet_name='키워드', spreadsheet_id=None):
         })
 
         if i < len(keywords):
-            time.sleep(random.uniform(3, 6))
+            time.sleep(random.uniform(2, 4))
 
     _fill_previous_values(results, sheet_name, spreadsheet_id=spreadsheet_id)
     write_results(results, sheet_name, spreadsheet_id=spreadsheet_id)
 
     # 작업현황 표 (J~P열) 기록
     try:
-        _build_and_write_status(results, keywords, sheet_name, spreadsheet_id)
+        _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet_id)
     except Exception as e:
         print(f"[작업현황] 실패: {e}", flush=True)
 
     return results
 
 
-def _build_and_write_status(results, keywords, sheet_name, spreadsheet_id):
-    """작업현황 표 생성 및 J~P열 기록"""
+def _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet_id):
+    """작업현황 표 생성 및 J~P열 기록 (카페는 순위체크 시 이미 수집됨)"""
     print(f"[작업현황] [{sheet_name}] 집계 시작...", flush=True)
 
     # 키워드별 고유 목록
@@ -137,21 +142,6 @@ def _build_and_write_status(results, keywords, sheet_name, spreadsheet_id):
     for k in unique_keywords:
         volume_map[k] = get_search_volume(k)
     print(f"[작업현황] 검색량 {len(volume_map)}개 조회 완료", flush=True)
-
-    # 상위 카페 3개 (selenium)
-    cafe_map = {}
-    driver = None
-    try:
-        driver = create_driver()
-        for i, k in enumerate(unique_keywords, 1):
-            print(f"[카페추출] ({i}/{len(unique_keywords)}) '{k}'", flush=True)
-            cafe_map[k] = get_top_cafes(driver, k, max_count=3)
-            time.sleep(random.uniform(2, 4))
-    except Exception as e:
-        print(f"[카페추출] 드라이버 오류: {e}", flush=True)
-    finally:
-        if driver:
-            driver.quit()
 
     status_rows = []
     for r in results:

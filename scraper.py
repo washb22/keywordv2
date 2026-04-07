@@ -229,16 +229,55 @@ def get_divider_y(driver):
     return None
 
 
+def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
+    """섹션에서 카페 이름 N개 추출. 인기글이면 카드 제목(15px+), 아니면 모든 카페 링크"""
+    cafe_names = []
+    seen = set()
+    try:
+        links = section.find_elements(By.CSS_SELECTOR, "a[href*='cafe.naver.com']")
+        for link in links:
+            try:
+                if not link.is_displayed():
+                    continue
+                if is_grouped:
+                    fs = link.value_of_css_property("font-size")
+                    size_px = float(fs.replace("px", "")) if fs else 13
+                    if size_px < 15:
+                        continue
+                name = _extract_cafe_name_from_link(link)
+                if not name:
+                    continue
+                if not is_grouped and len(name) > 20:
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                cafe_names.append(name)
+                if len(cafe_names) >= max_count:
+                    break
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return cafe_names
+
+
 def check_sections(driver, keyword, post_url, post_title):
+    """순위 체크 + 상위 카페 3개 추출을 한 번에 수행.
+    Returns: (rank_result_or_None, cafe_list)
+    """
     sections = driver.find_elements(By.CSS_SELECTOR, "#main_pack .sc_new")
-    print(f"[{keyword}] {len(sections)}개 섹션 발견")
+    print(f"[{keyword}] {len(sections)}개 섹션 발견", flush=True)
 
     divider_y = get_divider_y(driver)
-    print(f"[{keyword}] 윗탭/아랫탭 경계 Y: {divider_y}")
+    print(f"[{keyword}] 윗탭/아랫탭 경계 Y: {divider_y}", flush=True)
 
     skip_titles = ["광고", "AI 브리핑", "브랜드", "가격비교", "쇼핑", "스토어"]
     upper_rank = 0
     lower_rank = 0
+
+    rank_result = None
+    top_cafes = []
 
     for section in sections:
         try:
@@ -252,39 +291,43 @@ def check_sections(driver, keyword, post_url, post_title):
                 continue
             section_y = section.location['y']
             is_upper = divider_y is None or section_y < divider_y
-
-            post_links = extract_post_links(section)
-
-            # 순위 카운트
-            if is_upper:
-                upper_rank += 1
-            else:
-                lower_rank += 1
-
-            # 인기글 묶음 섹션 vs 개별 섹션 판별
             is_grouped = "인기글" in section_title
 
-            # 인기글 묶음 섹션은 카드별 메인 글만 추출 (댓글/관련글 제외)
-            if is_grouped:
-                post_links = _filter_card_titles(section)
+            # 상위 카페 3개 추출: 윗탭 + 카페탭 아닌 것 + 아직 못 찾은 경우
+            if is_upper and not top_cafes and "sp_ncafe" not in section_class:
+                cafes = _collect_cafe_names_from_section(section, is_grouped, 3)
+                if cafes:
+                    top_cafes = cafes
+                    print(f"[{keyword}] 상위 카페: {top_cafes}", flush=True)
 
-            for link_idx, (href, text) in enumerate(post_links):
-                if url_or_title_matches(post_url, post_title, href, text):
-                    tab = "윗탭" if is_upper else "아랫탭"
-                    tab_rank = upper_rank if is_upper else lower_rank
+            # 순위 체크 (이미 찾았으면 스킵하고 카페만 계속 탐색)
+            if rank_result is None:
+                if is_upper:
+                    upper_rank += 1
+                else:
+                    lower_rank += 1
 
-                    if is_grouped:
-                        # 인기글 묶음: 섹션명 + 섹션 내 순위
-                        in_rank = link_idx + 1
-                        print(f"[{keyword}] '{section_title}' {in_rank}위에서 발견!")
-                        return (section_title, in_rank, section_title)
-                    else:
-                        # 개별 섹션: 통합검색 순위
-                        print(f"[{keyword}] {tab} {tab_rank}위에서 발견!")
-                        return (tab, tab_rank, tab)
+                post_links = _filter_card_titles(section) if is_grouped else extract_post_links(section)
+
+                for link_idx, (href, text) in enumerate(post_links):
+                    if url_or_title_matches(post_url, post_title, href, text):
+                        tab = "윗탭" if is_upper else "아랫탭"
+                        tab_rank = upper_rank if is_upper else lower_rank
+                        if is_grouped:
+                            in_rank = link_idx + 1
+                            print(f"[{keyword}] '{section_title}' {in_rank}위에서 발견!", flush=True)
+                            rank_result = (section_title, in_rank, section_title)
+                        else:
+                            print(f"[{keyword}] {tab} {tab_rank}위에서 발견!", flush=True)
+                            rank_result = (tab, tab_rank, tab)
+                        break
+
+            # 둘 다 찾았으면 종료
+            if rank_result and top_cafes:
+                break
         except Exception:
             continue
-    return None
+    return rank_result, top_cafes
 
 
 def _extract_cafe_name_from_link(link):
@@ -404,13 +447,15 @@ def get_top_cafes(driver, keyword: str, max_count: int = 3):
 
 
 def run_check(keyword: str, post_url: str, post_title: str = None) -> tuple:
-    """키워드 순위 확인 메인 함수"""
-    print(f"--- '{keyword}' 순위 확인 시작 ---")
+    """키워드 순위 확인 + 상위 카페 추출 (한 번의 페이지 방문).
+    Returns: (status, rank, section, top_cafes)
+    """
+    print(f"--- '{keyword}' 순위 확인 시작 ---", flush=True)
     driver = None
     try:
         driver = create_driver()
         q = urllib.parse.quote(keyword)
-        print(f"[{keyword}] 통합검색 페이지 접근 중...")
+        print(f"[{keyword}] 통합검색 페이지 접근 중...", flush=True)
         driver.get(f"https://search.naver.com/search.naver?query={q}")
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "main_pack")))
         human_sleep()
@@ -418,16 +463,16 @@ def run_check(keyword: str, post_url: str, post_title: str = None) -> tuple:
         time.sleep(1.5)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
         time.sleep(1)
-        result = check_sections(driver, keyword, post_url, post_title)
-        if result:
-            return result
-        print(f"[{keyword}] 통합검색 1페이지에서 URL을 찾지 못함")
-        return ("노출X", 999, None)
+        rank_result, top_cafes = check_sections(driver, keyword, post_url, post_title)
+        if rank_result:
+            return (*rank_result, top_cafes)
+        print(f"[{keyword}] 통합검색 1페이지에서 URL을 찾지 못함", flush=True)
+        return ("노출X", 999, None, top_cafes)
     except Exception as e:
-        print(f"[{keyword}] 순위 확인 중 오류 발생: {str(e)}")
+        print(f"[{keyword}] 순위 확인 중 오류 발생: {str(e)}", flush=True)
         traceback.print_exc()
-        return ("확인 실패", 999, None)
+        return ("확인 실패", 999, None, [])
     finally:
         if driver:
             driver.quit()
-        print(f"--- '{keyword}' 순위 확인 완료 ---\n")
+        print(f"--- '{keyword}' 순위 확인 완료 ---\n", flush=True)
