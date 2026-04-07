@@ -267,6 +267,11 @@ def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
         # 끝의 특수문자/이모지 제거 (예: "아름다운동행!" → "아름다운동행")
         name = name.rstrip("!?.,~★☆*#@-_ ")
         name = name.strip()
+
+        # 여전히 20자 초과면 첫 단어만 (예: "로봇청소기카페 효녀로청 청소로봇..." → "로봇청소기카페")
+        if len(name) > 20 and " " in name:
+            name = name.split()[0]
+
         return name
 
     def _add(name):
