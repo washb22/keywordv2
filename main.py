@@ -20,10 +20,74 @@ from dotenv import load_dotenv
 # .env 로드
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
-from sheet import read_keywords, write_results, check_request_flag, setup_sheet
-from scraper import run_check
+from sheet import read_keywords, write_results, check_request_flag, setup_sheet, write_status_section
+from scraper import run_check, get_top_cafes, create_driver
 from telegram_notify import send_report
+from naver_ad_api import get_search_volume
 import random
+
+
+def build_and_write_status(results, all_keywords):
+    """작업현황 표 (J~P열) 생성 및 기록.
+    - 같은 키워드에 작업글 N개면 N개 행으로 전개
+    - 검색량은 네이버 광고 API로 조회
+    - 카페 상위 3개는 selenium으로 재조회 (키워드당 1회 캐시)
+    """
+    print("\n[작업현황] 집계 시작...")
+
+    # 키워드 단위 고유 목록
+    unique_keywords = []
+    seen = set()
+    for kw in all_keywords:
+        k = kw['keyword']
+        if k and k not in seen:
+            seen.add(k)
+            unique_keywords.append(k)
+
+    # 키워드별 검색량 (광고 API)
+    volume_map = {}
+    for k in unique_keywords:
+        volume_map[k] = get_search_volume(k)
+
+    # 키워드별 상위 카페 3개 (selenium 재사용)
+    cafe_map = {}
+    driver = None
+    try:
+        driver = create_driver()
+        for i, k in enumerate(unique_keywords, 1):
+            print(f"[카페추출] ({i}/{len(unique_keywords)}) '{k}'")
+            cafe_map[k] = get_top_cafes(driver, k, max_count=3)
+            time.sleep(random.uniform(2, 4))
+    except Exception as e:
+        print(f"[카페추출] 드라이버 오류: {e}")
+    finally:
+        if driver:
+            driver.quit()
+
+    # results 는 main 시트 순서와 동일 → 그대로 J~P에 풀어서 기록
+    status_rows = []
+    for r in results:
+        keyword = r['keyword']
+        current_rank = r.get('status', '')  # "윗탭 3위" / "미노출" 등
+        if current_rank == '미노출' or not current_rank:
+            state_label = '❌ 누락'
+            rank_display = ''
+        elif '아랫탭' in current_rank or '인기글' in current_rank:
+            state_label = '⚠️ 하위탭'
+            rank_display = current_rank
+        else:
+            state_label = '✅ 잡힘'
+            rank_display = current_rank
+
+        status_rows.append({
+            'keyword': keyword,
+            'volume': volume_map.get(keyword, 0),
+            'cafes': cafe_map.get(keyword, []),
+            'current_rank': rank_display,
+            'status': state_label,
+        })
+
+    write_status_section(status_rows)
 
 
 def check_all_keywords():
@@ -84,6 +148,12 @@ def check_all_keywords():
 
     # 스프레드시트에 결과 기록
     write_results(results)
+
+    # 작업현황 표 (J~P열) 기록
+    try:
+        build_and_write_status(results, keywords)
+    except Exception as e:
+        print(f"[작업현황] 실패: {e}")
 
     # 텔레그램 알림
     send_report(results)
@@ -148,6 +218,26 @@ def check_selected_keywords(start_row, end_row):
 
     _fill_previous_values(results)
     write_results(results)
+
+    # 작업현황 표 (J~P열) — 선택 체크 시에도 전체 키워드 기준으로 재생성
+    try:
+        all_kw_for_status = read_keywords()
+        # 선택되지 않은 키워드도 기존 E열 값으로 status 생성
+        existing_by_row = {r['row']: r for r in results}
+        full_results = []
+        for kw in all_kw_for_status:
+            if kw['row'] in existing_by_row:
+                full_results.append(existing_by_row[kw['row']])
+            else:
+                # 기존 시트 값 읽기가 필요하지만 간단히 빈 상태로 처리
+                full_results.append({
+                    'row': kw['row'],
+                    'keyword': kw['keyword'],
+                    'status': '',
+                })
+        build_and_write_status(full_results, all_kw_for_status)
+    except Exception as e:
+        print(f"[작업현황] 실패: {e}")
 
     print(f"\n선택 키워드 {len(results)}개 체크 완료!")
 

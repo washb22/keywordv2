@@ -287,6 +287,122 @@ def check_sections(driver, keyword, post_url, post_title):
     return None
 
 
+def _extract_cafe_name_from_link(link):
+    """카페 링크에서 카페 표시명 추출"""
+    try:
+        # 카페 이름은 보통 링크 내부 또는 부모 요소의 특정 클래스에 있음
+        # 1) aria-label 또는 title 속성
+        for attr in ("aria-label", "title"):
+            v = (link.get_attribute(attr) or "").strip()
+            if v and 1 < len(v) < 30 and "더보기" not in v:
+                return v
+        # 2) 링크 텍스트
+        txt = (link.text or "").strip()
+        if txt and 1 < len(txt) < 30:
+            return txt
+    except Exception:
+        pass
+    return None
+
+
+def get_top_cafes(driver, keyword: str, max_count: int = 3):
+    """윗탭 최상단 카페 관련 섹션에서 카페 이름 N개 추출.
+    인기글 묶음이면 거기서, 아니면 개별 카페 섹션에서.
+    주의: 카페 섹션(카페 탭 결과) 은 제외.
+    """
+    try:
+        q = urllib.parse.quote(keyword)
+        driver.get(f"https://search.naver.com/search.naver?query={q}")
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "main_pack")))
+        human_sleep()
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(1.2)
+
+        sections = driver.find_elements(By.CSS_SELECTOR, "#main_pack .sc_new")
+        divider_y = get_divider_y(driver)
+        skip_titles = ["광고", "AI 브리핑", "브랜드", "가격비교", "쇼핑", "스토어", "카페"]
+
+        for section in sections:
+            try:
+                if not section.is_displayed() or section.size['height'] < 50:
+                    continue
+                section_class = section.get_attribute("class") or ""
+                if "ad_section" in section_class:
+                    continue
+                # 카페 섹션(카페 탭 결과) 자체는 제외
+                if "sp_ncafe" in section_class:
+                    continue
+                section_title = extract_section_title(section)
+                if any(sk in section_title for sk in skip_titles):
+                    continue
+                section_y = section.location['y']
+                is_upper = divider_y is None or section_y < divider_y
+                if not is_upper:
+                    continue
+
+                is_grouped = "인기글" in section_title
+
+                # 인기글 묶음: 각 카드의 카페명(15px 이상 폰트) 추출
+                if is_grouped:
+                    cafe_names = []
+                    seen = set()
+                    links = section.find_elements(By.CSS_SELECTOR, "a[href*='cafe.naver.com']")
+                    for link in links:
+                        try:
+                            if not link.is_displayed():
+                                continue
+                            fs = link.value_of_css_property("font-size")
+                            size_px = float(fs.replace("px", "")) if fs else 13
+                            if size_px < 15:
+                                continue
+                            name = _extract_cafe_name_from_link(link)
+                            if not name:
+                                continue
+                            if name in seen:
+                                continue
+                            seen.add(name)
+                            cafe_names.append(name)
+                            if len(cafe_names) >= max_count:
+                                break
+                        except Exception:
+                            continue
+                    if cafe_names:
+                        print(f"[카페추출] '{keyword}' 인기글 섹션: {cafe_names}")
+                        return cafe_names[:max_count]
+
+                # 그 외 (통합검색 개별 카페 글이 섞인 섹션): 카페 링크 중 카페명 추출
+                else:
+                    cafe_names = []
+                    seen = set()
+                    links = section.find_elements(By.CSS_SELECTOR, "a[href*='cafe.naver.com']")
+                    for link in links:
+                        try:
+                            if not link.is_displayed():
+                                continue
+                            name = _extract_cafe_name_from_link(link)
+                            if not name:
+                                continue
+                            # 너무 긴 텍스트는 게시글 제목일 가능성 → 제외
+                            if len(name) > 20:
+                                continue
+                            if name in seen:
+                                continue
+                            seen.add(name)
+                            cafe_names.append(name)
+                            if len(cafe_names) >= max_count:
+                                break
+                        except Exception:
+                            continue
+                    if cafe_names:
+                        print(f"[카페추출] '{keyword}' {section_title}: {cafe_names}")
+                        return cafe_names[:max_count]
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[카페추출] '{keyword}' 오류: {e}")
+    return []
+
+
 def run_check(keyword: str, post_url: str, post_title: str = None) -> tuple:
     """키워드 순위 확인 메인 함수"""
     print(f"--- '{keyword}' 순위 확인 시작 ---")

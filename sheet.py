@@ -136,6 +136,60 @@ def write_results(results, sheet_name='키워드', spreadsheet_id=None):
         return False
 
 
+def write_status_section(status_rows, sheet_name='키워드', spreadsheet_id=None):
+    """작업현황 표를 J열부터 기록.
+    J: 키워드 | K: 검색량 | L: 카페1 | M: 카페2 | N: 카페3 | O: 현재순위 | P: 상태
+
+    status_rows: list of dict {keyword, volume, cafes, current_rank, status}
+    """
+    spreadsheet = get_spreadsheet(spreadsheet_id)
+    if not spreadsheet:
+        return False
+    try:
+        worksheet = spreadsheet.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"[시트] '{sheet_name}' 시트를 찾을 수 없습니다.")
+        return False
+
+    try:
+        # 헤더 작성
+        headers = ['키워드', '검색량', '카페1', '카페2', '카페3', '현재순위', '상태']
+        values = [headers]
+        for r in status_rows:
+            cafes = r.get('cafes') or []
+            cafe1 = cafes[0] if len(cafes) > 0 else ''
+            cafe2 = cafes[1] if len(cafes) > 1 else ''
+            cafe3 = cafes[2] if len(cafes) > 2 else ''
+            values.append([
+                r.get('keyword', ''),
+                r.get('volume', '') if r.get('volume') else '',
+                cafe1, cafe2, cafe3,
+                r.get('current_rank', ''),
+                r.get('status', ''),
+            ])
+
+        # 기존 J~P 영역 클리어 (최대 500행)
+        worksheet.batch_clear(["J1:P500"])
+        # 새로 기록
+        end_row = len(values)
+        worksheet.update(range_name=f'J1:P{end_row}', values=values)
+
+        # 헤더 서식
+        worksheet.format('J1:P1', {
+            'textFormat': {'bold': True, 'foregroundColorStyle': {'rgbColor': {'red': 1, 'green': 1, 'blue': 1}}},
+            'backgroundColor': {'red': 0.3, 'green': 0.6, 'blue': 0.4},
+            'horizontalAlignment': 'CENTER',
+        })
+
+        print(f"[시트] 작업현황 {len(status_rows)}행 기록 완료 (J~P)")
+        return True
+    except Exception as e:
+        print(f"[시트] 작업현황 기록 실패: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def check_request_flag(sheet_name='키워드'):
     """스프레드시트에서 체크 요청 플래그 확인 (K1 셀)
 

@@ -1,0 +1,96 @@
+# naver_ad_api.py - 네이버 광고 API 검색량 조회
+# 필요 환경변수: NAVER_AD_API_KEY, NAVER_AD_SECRET_KEY, NAVER_AD_CUSTOMER_ID
+
+import os
+import time
+import hmac
+import hashlib
+import base64
+import requests
+
+BASE_URL = "https://api.searchad.naver.com"
+
+
+def _signature(timestamp, method, uri, secret_key):
+    message = f"{timestamp}.{method}.{uri}"
+    sig = hmac.new(secret_key.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).digest()
+    return base64.b64encode(sig).decode("utf-8")
+
+
+def _headers(method, uri):
+    api_key = os.environ.get("NAVER_AD_API_KEY", "")
+    secret_key = os.environ.get("NAVER_AD_SECRET_KEY", "")
+    customer_id = os.environ.get("NAVER_AD_CUSTOMER_ID", "")
+    if not (api_key and secret_key and customer_id):
+        return None
+    timestamp = str(int(time.time() * 1000))
+    return {
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Timestamp": timestamp,
+        "X-API-KEY": api_key,
+        "X-Customer": customer_id,
+        "X-Signature": _signature(timestamp, method, uri, secret_key),
+    }
+
+
+_cache = {}
+
+
+def get_search_volume(keyword: str) -> int:
+    """PC + 모바일 월간 검색량 합산. 실패 시 0 반환."""
+    if keyword in _cache:
+        return _cache[keyword]
+
+    uri = "/keywordstool"
+    headers = _headers("GET", uri)
+    if not headers:
+        print("[광고API] 환경변수 없음 - 검색량 조회 건너뜀")
+        _cache[keyword] = 0
+        return 0
+
+    try:
+        # hintKeywords 는 공백 제거한 키워드
+        params = {"hintKeywords": keyword.replace(" ", ""), "showDetail": "1"}
+        r = requests.get(BASE_URL + uri, headers=headers, params=params, timeout=10)
+        if r.status_code != 200:
+            print(f"[광고API] '{keyword}' 조회 실패 ({r.status_code}): {r.text[:120]}")
+            _cache[keyword] = 0
+            return 0
+
+        data = r.json()
+        rows = data.get("keywordList") or []
+        # 입력 키워드와 정확히 일치하는 것 우선
+        target = keyword.replace(" ", "").lower()
+        match = None
+        for row in rows:
+            rel = (row.get("relKeyword") or "").replace(" ", "").lower()
+            if rel == target:
+                match = row
+                break
+        if not match and rows:
+            match = rows[0]
+        if not match:
+            _cache[keyword] = 0
+            return 0
+
+        pc = match.get("monthlyPcQcCnt", 0)
+        mo = match.get("monthlyMobileQcCnt", 0)
+        # "< 10" 같은 문자열도 옴
+        def _to_int(v):
+            if isinstance(v, int):
+                return v
+            s = str(v).strip().replace(",", "")
+            if s.startswith("<"):
+                return 0
+            try:
+                return int(s)
+            except ValueError:
+                return 0
+
+        total = _to_int(pc) + _to_int(mo)
+        _cache[keyword] = total
+        return total
+    except Exception as e:
+        print(f"[광고API] '{keyword}' 오류: {e}")
+        _cache[keyword] = 0
+        return 0
