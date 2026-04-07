@@ -446,23 +446,26 @@ def get_top_cafes(driver, keyword: str, max_count: int = 3):
     return []
 
 
-def run_check(keyword: str, post_url: str, post_title: str = None) -> tuple:
+def run_check(keyword: str, post_url: str, post_title: str = None, driver=None) -> tuple:
     """키워드 순위 확인 + 상위 카페 추출 (한 번의 페이지 방문).
+    driver가 주어지면 재사용 (종료 안 함), 없으면 새로 생성 후 종료.
     Returns: (status, rank, section, top_cafes)
     """
     print(f"--- '{keyword}' 순위 확인 시작 ---", flush=True)
-    driver = None
+    own_driver = False
     try:
-        driver = create_driver()
+        if driver is None:
+            driver = create_driver()
+            own_driver = True
         q = urllib.parse.quote(keyword)
         print(f"[{keyword}] 통합검색 페이지 접근 중...", flush=True)
         driver.get(f"https://search.naver.com/search.naver?query={q}")
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "main_pack")))
-        human_sleep()
+        human_sleep(0.4, 0.9)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(1.5)
+        time.sleep(0.8)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(1)
+        time.sleep(0.6)
         rank_result, top_cafes = check_sections(driver, keyword, post_url, post_title)
         if rank_result:
             return (*rank_result, top_cafes)
@@ -473,6 +476,6 @@ def run_check(keyword: str, post_url: str, post_title: str = None) -> tuple:
         traceback.print_exc()
         return ("확인 실패", 999, None, [])
     finally:
-        if driver:
+        if own_driver and driver:
             driver.quit()
         print(f"--- '{keyword}' 순위 확인 완료 ---\n", flush=True)

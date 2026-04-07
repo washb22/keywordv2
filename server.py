@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 from sheet import read_keywords, write_results, get_spreadsheet, write_status_section
-from scraper import run_check
+from scraper import run_check, create_driver
 from telegram_notify import send_report
 from naver_ad_api import get_search_volume
 from datetime import datetime, timezone, timedelta
@@ -74,13 +74,22 @@ def get_all_sheet_names():
 
 
 def do_check(keywords, sheet_name='키워드', spreadsheet_id=None):
-    """키워드 순위 체크 실행 - 순위 + 상위 카페 3개 동시 추출"""
+    """키워드 순위 체크 실행 - 드라이버 1회 생성 후 재사용"""
     results = []
     cafe_map = {}  # 키워드 → 상위 카페 리스트 (캐시)
+
+    driver = None
+    try:
+        print(f"[{sheet_name}] Chrome 드라이버 생성 중...", flush=True)
+        driver = create_driver()
+        print(f"[{sheet_name}] 드라이버 준비 완료", flush=True)
+    except Exception as e:
+        print(f"[{sheet_name}] 드라이버 생성 실패: {e}", flush=True)
+
     for i, kw in enumerate(keywords, 1):
         print(f"[{sheet_name}] [{i}/{len(keywords)}] '{kw['keyword']}' 체크 중...", flush=True)
         try:
-            status, rank, section, top_cafes = run_check(kw['keyword'], kw['url'], kw['title'])
+            status, rank, section, top_cafes = run_check(kw['keyword'], kw['url'], kw['title'], driver=driver)
         except Exception as e:
             print(f"  오류: {e}", flush=True)
             status, rank, section, top_cafes = '확인 실패', 999, None, []
@@ -111,6 +120,13 @@ def do_check(keywords, sheet_name='키워드', spreadsheet_id=None):
 
         if i < len(keywords):
             time.sleep(random.uniform(2, 4))
+
+    # 드라이버 종료
+    if driver:
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
     _fill_previous_values(results, sheet_name, spreadsheet_id=spreadsheet_id)
     write_results(results, sheet_name, spreadsheet_id=spreadsheet_id)
