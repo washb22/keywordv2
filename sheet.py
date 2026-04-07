@@ -136,11 +136,14 @@ def write_results(results, sheet_name='키워드', spreadsheet_id=None):
         return False
 
 
-def write_status_section(status_rows, sheet_name='키워드', spreadsheet_id=None):
-    """작업현황 표를 J열부터 기록.
+def write_status_section(status_rows, sheet_name='키워드', spreadsheet_id=None, clear_all=False):
+    """작업현황 표를 J열부터 기록 (A열 기준 원본 행 번호에 맞춰서).
     J: 키워드 | K: 검색량 | L: 카페1 | M: 카페2 | N: 카페3 | O: 현재순위 | P: 상태
 
-    status_rows: list of dict {keyword, volume, cafes, current_rank, status}
+    status_rows: list of dict {keyword, volume, cafes, current_rank, status, row}
+        row: 원본 시트의 행 번호 (A열 기준). 해당 위치에 J~P 기록됨.
+    clear_all: True면 J1:P500 전체 초기화 후 쓰기 (전체 체크 시)
+               False면 status_rows에 있는 행만 업데이트 (선택 체크 시)
     """
     spreadsheet = get_spreadsheet(spreadsheet_id)
     if not spreadsheet:
@@ -148,31 +151,41 @@ def write_status_section(status_rows, sheet_name='키워드', spreadsheet_id=Non
     try:
         worksheet = spreadsheet.worksheet(sheet_name)
     except gspread.exceptions.WorksheetNotFound:
-        print(f"[시트] '{sheet_name}' 시트를 찾을 수 없습니다.")
+        print(f"[시트] '{sheet_name}' 시트를 찾을 수 없습니다.", flush=True)
         return False
 
     try:
-        # 헤더 작성
         headers = ['키워드', '검색량', '카페1', '카페2', '카페3', '현재순위', '상태']
-        values = [headers]
+
+        if clear_all:
+            worksheet.batch_clear(["J1:P500"])
+
+        # 헤더는 항상 작성
+        worksheet.update(range_name='J1:P1', values=[headers])
+
+        # 각 status_row를 원본 시트 행 번호에 맞춰 J~P 기록
+        cells_to_update = []
         for r in status_rows:
+            target_row = r.get('row')
+            if not target_row:
+                continue
             cafes = r.get('cafes') or []
             cafe1 = cafes[0] if len(cafes) > 0 else ''
             cafe2 = cafes[1] if len(cafes) > 1 else ''
             cafe3 = cafes[2] if len(cafes) > 2 else ''
-            values.append([
+            row_values = [
                 r.get('keyword', ''),
                 r.get('volume', '') if r.get('volume') else '',
                 cafe1, cafe2, cafe3,
                 r.get('current_rank', ''),
                 r.get('status', ''),
-            ])
+            ]
+            # J=10, K=11, ..., P=16
+            for col_offset, val in enumerate(row_values):
+                cells_to_update.append(gspread.Cell(target_row, 10 + col_offset, val))
 
-        # 기존 J~P 영역 클리어 (최대 500행)
-        worksheet.batch_clear(["J1:P500"])
-        # 새로 기록
-        end_row = len(values)
-        worksheet.update(range_name=f'J1:P{end_row}', values=values)
+        if cells_to_update:
+            worksheet.update_cells(cells_to_update)
 
         # 헤더 서식
         worksheet.format('J1:P1', {
@@ -181,10 +194,10 @@ def write_status_section(status_rows, sheet_name='키워드', spreadsheet_id=Non
             'horizontalAlignment': 'CENTER',
         })
 
-        print(f"[시트] 작업현황 {len(status_rows)}행 기록 완료 (J~P)")
+        print(f"[시트] 작업현황 {len(status_rows)}행 기록 완료 (행 정렬 방식)", flush=True)
         return True
     except Exception as e:
-        print(f"[시트] 작업현황 기록 실패: {e}")
+        print(f"[시트] 작업현황 기록 실패: {e}", flush=True)
         import traceback
         traceback.print_exc()
         return False

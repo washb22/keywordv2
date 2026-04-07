@@ -73,8 +73,10 @@ def get_all_sheet_names():
     return [ws.title for ws in spreadsheet.worksheets()]
 
 
-def do_check(keywords, sheet_name='키워드', spreadsheet_id=None):
-    """키워드 순위 체크 실행 - 드라이버 1회 생성 후 재사용"""
+def do_check(keywords, sheet_name='키워드', spreadsheet_id=None, is_full_check=False):
+    """키워드 순위 체크 실행 - 드라이버 1회 생성 후 재사용
+    is_full_check: True면 작업현황 J~P 전체 초기화 후 재작성, False면 선택 행만 업데이트
+    """
     results = []
     cafe_map = {}  # 키워드 → 상위 카페 리스트 (캐시)
 
@@ -133,16 +135,16 @@ def do_check(keywords, sheet_name='키워드', spreadsheet_id=None):
 
     # 작업현황 표 (J~P열) 기록
     try:
-        _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet_id)
+        _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet_id, is_full_check)
     except Exception as e:
         print(f"[작업현황] 실패: {e}", flush=True)
 
     return results
 
 
-def _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet_id):
+def _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet_id, is_full_check=False):
     """작업현황 표 생성 및 J~P열 기록 (카페는 순위체크 시 이미 수집됨)"""
-    print(f"[작업현황] [{sheet_name}] 집계 시작...", flush=True)
+    print(f"[작업현황] [{sheet_name}] 집계 시작... (full={is_full_check})", flush=True)
 
     # 키워드별 고유 목록
     unique_keywords = []
@@ -174,6 +176,7 @@ def _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet
             rank_display = current_rank
 
         status_rows.append({
+            'row': r.get('row'),  # 원본 시트 행 번호 (A열 기준)
             'keyword': keyword,
             'volume': volume_map.get(keyword, 0),
             'cafes': cafe_map.get(keyword, []),
@@ -181,7 +184,11 @@ def _build_and_write_status(results, keywords, cafe_map, sheet_name, spreadsheet
             'status': state_label,
         })
 
-    write_status_section(status_rows, sheet_name, spreadsheet_id=spreadsheet_id or None)
+    write_status_section(
+        status_rows, sheet_name,
+        spreadsheet_id=spreadsheet_id or None,
+        clear_all=is_full_check,
+    )
 
 
 def queue_worker():
@@ -194,11 +201,12 @@ def queue_worker():
             keywords = task['keywords']
             sheet_name = task['sheet_name']
             send_telegram = task.get('send_telegram', False)
+            is_full_check = task.get('is_full_check', False)
 
             spreadsheet_id = task.get('spreadsheet_id', '')
 
             print(f"[큐] [{sheet_name}] {len(keywords)}개 키워드 체크 시작 (대기열: {task_queue.qsize()}개 남음)")
-            results = do_check(keywords, sheet_name, spreadsheet_id=spreadsheet_id or None)
+            results = do_check(keywords, sheet_name, spreadsheet_id=spreadsheet_id or None, is_full_check=is_full_check)
             if send_telegram and results:
                 send_report(results)
             print(f"[큐] [{sheet_name}] 체크 완료")
@@ -248,7 +256,8 @@ def check_all():
         'keywords': keywords,
         'sheet_name': sheet_name,
         'spreadsheet_id': spreadsheet_id,
-        'send_telegram': True
+        'send_telegram': True,
+        'is_full_check': True,
     })
 
     queue_size = task_queue.qsize()
@@ -284,7 +293,8 @@ def check_selected():
         'keywords': keywords,
         'sheet_name': sheet_name,
         'spreadsheet_id': spreadsheet_id,
-        'send_telegram': False
+        'send_telegram': False,
+        'is_full_check': False,
     })
 
     keyword_names = [kw['keyword'] for kw in keywords]
@@ -312,7 +322,8 @@ def scheduled_check():
         task_queue.put({
             'keywords': keywords,
             'sheet_name': sheet_name,
-            'send_telegram': True
+            'send_telegram': True,
+            'is_full_check': True,
         })
         print(f"[스케줄러] [{sheet_name}] {len(keywords)}개 키워드 큐에 추가")
 

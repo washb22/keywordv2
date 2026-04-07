@@ -239,15 +239,30 @@ def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
     cafe_names = []
     seen = set()
 
+    def _clean(name):
+        """카페명 정리: 부연설명/특수문자 제거"""
+        if not name:
+            return None
+        if "\n" in name:
+            name = name.split("\n")[0]
+        name = name.strip()
+        # 부연설명 구분자 앞까지만 (예: "줌마렐라 [김해, 장유...]" → "줌마렐라")
+        for sep in ["[", "(", " -", " |", " :"]:
+            if sep in name:
+                name = name.split(sep)[0].strip()
+                break
+        # 끝의 특수문자/이모지 제거 (예: "아름다운동행!" → "아름다운동행")
+        name = name.rstrip("!?.,~★☆*#@")
+        name = name.strip()
+        return name
+
     def _add(name):
+        name = _clean(name)
         if not name:
             return False
-        name = name.strip()
-        if "\n" in name:
-            name = name.split("\n")[0].strip()
-        if not (1 < len(name) < 15):
+        if not (1 < len(name) <= 20):
             return False
-        # 필터: 날짜/시간/조회수/댓글수 등 숫자성 텍스트 제외
+        # 숫자성 텍스트 제외
         if name.replace(",", "").replace(".", "").isdigit():
             return False
         if name in seen:
