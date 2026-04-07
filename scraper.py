@@ -230,7 +230,10 @@ def get_divider_y(driver):
 
 
 def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
-    """섹션에서 카페 이름 N개 추출. 인기글이면 카드 제목(15px+), 아니면 모든 카페 링크"""
+    """섹션에서 카페 '이름' 추출. URL 패턴 기반:
+    - 카페 홈 링크(articles 경로 없음) = 카페명
+    - 게시글 링크(/articles/ 포함) = 게시글 제목 → 제외
+    """
     cafe_names = []
     seen = set()
     try:
@@ -239,15 +242,15 @@ def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
             try:
                 if not link.is_displayed():
                     continue
-                if is_grouped:
-                    fs = link.value_of_css_property("font-size")
-                    size_px = float(fs.replace("px", "")) if fs else 13
-                    if size_px < 15:
-                        continue
+                href = link.get_attribute("href") or ""
+                # 카페 홈 URL만 (게시글 URL 제외)
+                if not _is_cafe_home_url(href):
+                    continue
                 name = _extract_cafe_name_from_link(link)
                 if not name:
                     continue
-                if not is_grouped and len(name) > 20:
+                # 너무 길면 게시글 제목일 가능성 높음
+                if len(name) > 15:
                     continue
                 if name in seen:
                     continue
@@ -257,6 +260,31 @@ def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
                     break
             except Exception:
                 continue
+
+        # Fallback: URL 기반 탐색 실패 시, 요소 class 기반으로 카페명 찾기
+        if not cafe_names:
+            source_selectors = [
+                "[class*='cafe_name']", "[class*='source_info']",
+                "[class*='sub_info']", "[class*='user_info']",
+                "cite", ".source", ".user_box a",
+            ]
+            for sel in source_selectors:
+                try:
+                    elements = section.find_elements(By.CSS_SELECTOR, sel)
+                    for el in elements:
+                        if not el.is_displayed():
+                            continue
+                        text = (el.text or "").strip()
+                        # 첫 줄만 (여러 줄이면 카페명 + 부가정보)
+                        if "\n" in text:
+                            text = text.split("\n")[0].strip()
+                        if text and 1 < len(text) < 15 and text not in seen:
+                            seen.add(text)
+                            cafe_names.append(text)
+                            if len(cafe_names) >= max_count:
+                                return cafe_names
+                except Exception:
+                    continue
     except Exception:
         pass
     return cafe_names
@@ -330,19 +358,36 @@ def check_sections(driver, keyword, post_url, post_title):
     return rank_result, top_cafes
 
 
+def _is_cafe_home_url(href: str) -> bool:
+    """카페 홈 URL 여부 판별 (게시글 URL이 아닌)"""
+    if not href or "cafe.naver.com" not in href:
+        return False
+    # 게시글 URL 제외
+    if "/articles/" in href:
+        return False
+    if re.search(r'articleid=\d+', href, re.I):
+        return False
+    # cafe.naver.com/cafename (단순 홈)
+    if re.match(r'https?://(m\.)?cafe\.naver\.com/[^/?#]+/?(\?|$|#)', href):
+        return True
+    # cafe.naver.com/f-e/cafes/CAFEID (articles 경로 없음)
+    if re.search(r'cafe\.naver\.com/f-e/cafes/\d+/?(\?|$|#)', href):
+        return True
+    return False
+
+
 def _extract_cafe_name_from_link(link):
-    """카페 링크에서 카페 표시명 추출"""
+    """카페 링크에서 표시 텍스트 추출"""
     try:
-        # 카페 이름은 보통 링크 내부 또는 부모 요소의 특정 클래스에 있음
-        # 1) aria-label 또는 title 속성
-        for attr in ("aria-label", "title"):
-            v = (link.get_attribute(attr) or "").strip()
-            if v and 1 < len(v) < 30 and "더보기" not in v:
-                return v
-        # 2) 링크 텍스트
+        # 1) 링크 텍스트 (가장 정확)
         txt = (link.text or "").strip()
         if txt and 1 < len(txt) < 30:
             return txt
+        # 2) aria-label 또는 title 속성 (fallback)
+        for attr in ("aria-label", "title"):
+            v = (link.get_attribute(attr) or "").strip()
+            if v and 1 < len(v) < 30 and "더보기" not in v and "이동" not in v:
+                return v
     except Exception:
         pass
     return None

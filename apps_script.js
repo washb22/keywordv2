@@ -177,14 +177,17 @@ function applyFormatting() {
 }
 
 // === 매일 새벽 6시 자동 체크 (트리거용) ===
+// 모든 시트의 체크 요청을 서버 큐에 넣고 즉시 종료.
+// 서버가 큐로 순차 처리하므로 Apps Script는 대기할 필요 없음.
+// (대기 루프는 Apps Script 6분 제한에 걸려서 제거됨)
 function dailyAutoCheck() {
   try {
-    // 서버 깨우기 (슬립 상태일 수 있으므로)
+    // 서버 깨우기 (Starter 플랜이면 불필요하지만 안전장치)
     try { UrlFetchApp.fetch(SERVER_URL + '/health', { 'muteHttpExceptions': true }); } catch(e) {}
-    Utilities.sleep(5000);
+    Utilities.sleep(3000);
 
-    // 모든 시트를 순회하며 체크 요청
     var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+    var queued = 0;
     for (var i = 0; i < sheets.length; i++) {
       var sheetName = sheets[i].getName();
       var lastRow = sheets[i].getLastRow();
@@ -197,27 +200,18 @@ function dailyAutoCheck() {
         'payload': JSON.stringify(payload),
         'muteHttpExceptions': true
       };
-      var response = UrlFetchApp.fetch(SERVER_URL + '/check/all', options);
-      console.log('[' + sheetName + '] 체크 요청: ' + response.getContentText());
-
-      // 이전 시트 체크가 끝날 때까지 대기
-      Utilities.sleep(10000);
-      _waitForCheckComplete();
+      try {
+        var response = UrlFetchApp.fetch(SERVER_URL + '/check/all', options);
+        console.log('[' + sheetName + '] 큐 추가: ' + response.getContentText());
+        queued++;
+      } catch (err) {
+        console.log('[' + sheetName + '] 요청 실패: ' + err.message);
+      }
+      Utilities.sleep(1500);  // 서버에 연속 요청 완충
     }
+    console.log('총 ' + queued + '개 시트 체크 큐에 추가 완료 - 서버가 순차 처리합니다');
   } catch (e) {
     console.log('자동 체크 실패: ' + e.message);
-  }
-}
-
-function _waitForCheckComplete() {
-  // 서버가 체크 완료할 때까지 대기 (최대 30분)
-  for (var i = 0; i < 60; i++) {
-    Utilities.sleep(30000);  // 30초마다 확인
-    try {
-      var resp = UrlFetchApp.fetch(SERVER_URL + '/health', { 'muteHttpExceptions': true });
-      var data = JSON.parse(resp.getContentText());
-      if (!data.checking) return;
-    } catch(e) {}
   }
 }
 
