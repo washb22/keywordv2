@@ -1,11 +1,11 @@
 // ============================================
-// Google Apps Script - KeywordV2
+// Google Apps Script - KeywordV2 (로컬 Watch 모드)
 // ============================================
-// 컬럼: A:키워드 B:글제목 C:URL D:이전순위 E:현재순위 F:변동 G:마지막확인
-
-// ★ 여기에 Render 서버 URL과 API 키를 입력하세요
-var SERVER_URL = 'https://keywordv2.onrender.com';
-var API_KEY = 'mykey123';
+// 컬럼: A:키워드 B:글제목 C:URL D:이전순위 E:현재순위 F:변동 G:마지막확인 H:체크요청플래그
+//
+// 로컬 PC에서 python main.py --watch 가 실행 중이어야 합니다.
+// Apps Script는 HTTP 요청 대신 시트 H1 셀에 '체크 요청' 문자열을 기록하고,
+// 로컬 watch 모드가 1분마다 감지하여 체크를 수행합니다.
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
@@ -33,25 +33,18 @@ function requestCheckAll() {
     return;
   }
 
+  // H1 셀에 "체크 요청" 기록 - 로컬 watch 모드가 1분 안에 감지합니다
   try {
-    var payload = { 'sheet_name': sheetName, 'spreadsheet_id': SpreadsheetApp.getActiveSpreadsheet().getId() };
-    var options = {
-      'method': 'post',
-      'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-      'payload': JSON.stringify(payload),
-      'muteHttpExceptions': true
-    };
-    var response = UrlFetchApp.fetch(SERVER_URL + '/check/all', options);
-    var result = JSON.parse(response.getContentText());
-
+    sheet.getRange('H1').setValue('체크 요청');
     SpreadsheetApp.getUi().alert(
-      '순위 확인 시작!\n\n' +
+      '✅ 체크 요청 전송!\n\n' +
       '• 시트: ' + sheetName + '\n' +
-      '• ' + result.message + '\n' +
-      '• 잠시 후 결과가 업데이트됩니다.'
+      '• 키워드: ' + keywordCount + '개\n' +
+      '• 로컬 PC에서 1분 내 처리됩니다.\n' +
+      '• 본인 PC가 켜져 있어야 작동합니다.'
     );
   } catch (e) {
-    SpreadsheetApp.getUi().alert('서버 연결 실패!\n\n' + e.message + '\n\n서버가 슬립 중일 수 있습니다. 30초 후 다시 시도해주세요.');
+    SpreadsheetApp.getUi().alert('H1 셀 쓰기 실패: ' + e.message);
   }
 }
 
@@ -84,31 +77,18 @@ function requestCheckSelected() {
     return;
   }
 
+  // H1 셀에 "체크:시작행-끝행" 기록
   try {
-    var payload = { 'start_row': validStartRow, 'end_row': validEndRow, 'sheet_name': sheetName, 'spreadsheet_id': SpreadsheetApp.getActiveSpreadsheet().getId() };
-    var options = {
-      'method': 'post',
-      'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-      'payload': JSON.stringify(payload),
-      'muteHttpExceptions': true
-    };
-    var response = UrlFetchApp.fetch(SERVER_URL + '/check/selected', options);
-    var resultText = response.getContentText();
-    var msg = '';
-    try {
-      var result = JSON.parse(resultText);
-      msg = result.message || '요청 전송 완료';
-    } catch(err) {
-      msg = '요청 전송 완료';
-    }
-
+    var flag = '체크:' + validStartRow + '-' + validEndRow;
+    sheet.getRange('H1').setValue(flag);
     SpreadsheetApp.getUi().alert(
-      '선택 키워드 확인 시작!\n\n' +
+      '✅ 선택 체크 요청 전송!\n\n' +
       '• 키워드: ' + keywords.join(', ') + '\n' +
-      '• ' + msg
+      '• 행: ' + validStartRow + '~' + validEndRow + '\n' +
+      '• 로컬 PC에서 1분 내 처리됩니다.'
     );
   } catch (e) {
-    SpreadsheetApp.getUi().alert('서버 연결 실패!\n\n' + e.message);
+    SpreadsheetApp.getUi().alert('H1 셀 쓰기 실패: ' + e.message);
   }
 }
 
@@ -177,39 +157,24 @@ function applyFormatting() {
 }
 
 // === 매일 새벽 6시 자동 체크 (트리거용) ===
-// 모든 시트의 체크 요청을 서버 큐에 넣고 즉시 종료.
-// 서버가 큐로 순차 처리하므로 Apps Script는 대기할 필요 없음.
-// (대기 루프는 Apps Script 6분 제한에 걸려서 제거됨)
+// 모든 시트의 H1 셀에 '체크 요청' 기록. 로컬 watch 모드가 1분 안에 감지하여 순차 처리.
 function dailyAutoCheck() {
   try {
-    // 서버 깨우기 (Starter 플랜이면 불필요하지만 안전장치)
-    try { UrlFetchApp.fetch(SERVER_URL + '/health', { 'muteHttpExceptions': true }); } catch(e) {}
-    Utilities.sleep(3000);
-
     var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
-    var queued = 0;
+    var flagged = 0;
     for (var i = 0; i < sheets.length; i++) {
       var sheetName = sheets[i].getName();
       var lastRow = sheets[i].getLastRow();
       if (lastRow < 2) continue;  // 데이터 없는 시트 스킵
-
-      var payload = { 'sheet_name': sheetName, 'spreadsheet_id': SpreadsheetApp.getActiveSpreadsheet().getId() };
-      var options = {
-        'method': 'post',
-        'headers': { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-        'payload': JSON.stringify(payload),
-        'muteHttpExceptions': true
-      };
       try {
-        var response = UrlFetchApp.fetch(SERVER_URL + '/check/all', options);
-        console.log('[' + sheetName + '] 큐 추가: ' + response.getContentText());
-        queued++;
+        sheets[i].getRange('H1').setValue('체크 요청');
+        console.log('[' + sheetName + '] H1 플래그 기록');
+        flagged++;
       } catch (err) {
-        console.log('[' + sheetName + '] 요청 실패: ' + err.message);
+        console.log('[' + sheetName + '] H1 쓰기 실패: ' + err.message);
       }
-      Utilities.sleep(1500);  // 서버에 연속 요청 완충
     }
-    console.log('총 ' + queued + '개 시트 체크 큐에 추가 완료 - 서버가 순차 처리합니다');
+    console.log('총 ' + flagged + '개 시트에 체크 요청 플래그 기록 완료');
   } catch (e) {
     console.log('자동 체크 실패: ' + e.message);
   }

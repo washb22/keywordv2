@@ -8,6 +8,13 @@ import os
 import sys
 import time
 import argparse
+
+# Windows 콘솔 UTF-8 설정 (이모지/한글 출력용)
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 from datetime import datetime, timezone, timedelta
 
 KST = timezone(timedelta(hours=9))
@@ -280,33 +287,102 @@ def _fill_previous_values(results):
 
 
 def watch_mode():
-    """스프레드시트 버튼 감지 모드 - 5분마다 K1 셀 확인"""
+    """멀티 시트 감지 모드 - 스프레드시트의 모든 탭 H1 셀을 주기적으로 확인.
+    각 탭에 '체크 요청' 플래그가 있으면 해당 탭의 키워드만 체크.
+    """
+    from sheet import get_spreadsheet, read_keywords
+    from server import do_check
+
+    POLL_INTERVAL = 60  # 1분 간격으로 빠르게 확인 (기존 5분 → 1분)
+
     print("=" * 50)
-    print("KeywordV2 감지 모드 시작")
-    print("스프레드시트에서 '전체 순위 확인' 버튼을 누르면 자동 체크됩니다.")
+    print("KeywordV2 로컬 감지 모드 시작 (멀티 시트)")
+    print(f"폴링 주기: {POLL_INTERVAL}초")
+    print("시트에서 '🔍 키워드 관리 → ✅ 전체 순위 확인' 누르면 자동 체크")
     print("종료: Ctrl+C")
     print("=" * 50)
 
     while True:
         try:
-            flag = check_request_flag()
-            if flag == 'all':
-                print(f"\n[감지] 전체 체크 요청! ({now_kst().strftime('%H:%M:%S')})")
-                check_all_keywords()
-            elif isinstance(flag, tuple):
-                start_row, end_row = flag
-                print(f"\n[감지] 선택 체크 요청 ({start_row}~{end_row}행) ({now_kst().strftime('%H:%M:%S')})")
-                check_selected_keywords(start_row, end_row)
-            else:
-                print(f"[대기중] {now_kst().strftime('%H:%M:%S')} - 요청 없음", end='\r')
+            spreadsheet = get_spreadsheet()
+            if not spreadsheet:
+                print(f"[대기중] {now_kst().strftime('%H:%M:%S')} - 시트 연결 실패", end='\r')
+                time.sleep(POLL_INTERVAL)
+                continue
 
-            time.sleep(300)  # 5분 간격
+            sheet_names = [ws.title for ws in spreadsheet.worksheets()]
+            triggered = False
+
+            for sheet_name in sheet_names:
+                try:
+                    worksheet = spreadsheet.worksheet(sheet_name)
+                    # H1 셀 값 확인
+                    val = (worksheet.acell('H1').value or '').strip()
+                    if not val:
+                        continue
+
+                    flag = None
+                    if val == '체크 요청':
+                        flag = 'all'
+                    elif val.startswith('체크:'):
+                        rows_part = val.split(':', 1)[1]
+                        if '-' in rows_part:
+                            s, e = rows_part.split('-')
+                            flag = (int(s), int(e))
+                        else:
+                            r = int(rows_part)
+                            flag = (r, r)
+
+                    if not flag:
+                        continue
+
+                    triggered = True
+                    print(f"\n[감지] [{sheet_name}] '{val}' ({now_kst().strftime('%H:%M:%S')})")
+
+                    # 해당 시트의 키워드 로드
+                    keywords = read_keywords(sheet_name=sheet_name)
+                    if not keywords:
+                        print(f"[{sheet_name}] 키워드 없음 - 스킵")
+                        worksheet.update_acell('H1', '')
+                        continue
+
+                    # 선택 범위면 필터
+                    is_full_check = (flag == 'all')
+                    if isinstance(flag, tuple):
+                        s, e = flag
+                        keywords = [kw for kw in keywords if s <= kw['row'] <= e]
+
+                    if not keywords:
+                        worksheet.update_acell('H1', '')
+                        continue
+
+                    # 체크 실행 (server.do_check 재사용)
+                    print(f"[{sheet_name}] {len(keywords)}개 키워드 체크 시작")
+                    try:
+                        do_check(keywords, sheet_name=sheet_name, is_full_check=is_full_check)
+                    except Exception as ce:
+                        print(f"[{sheet_name}] 체크 실패: {ce}")
+
+                    # H1 플래그 초기화
+                    try:
+                        worksheet.update_acell('H1', '')
+                    except Exception:
+                        pass
+
+                except Exception as e:
+                    print(f"[{sheet_name}] 처리 오류: {e}")
+                    continue
+
+            if not triggered:
+                print(f"[대기중] {now_kst().strftime('%H:%M:%S')} - 요청 없음 ({len(sheet_names)}개 탭 감시)", end='\r')
+
+            time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
             print("\n감지 모드 종료")
             break
         except Exception as e:
             print(f"\n[오류] {e}")
-            time.sleep(60)
+            time.sleep(30)
 
 
 def main():
