@@ -371,12 +371,17 @@ def check_sections(driver, keyword, post_url, post_title):
             is_upper = divider_y is None or section_y < divider_y
             is_grouped = "인기글" in section_title
 
-            # 상위 카페 3개 추출: 윗탭 + 카페탭 아닌 것 + 아직 못 찾은 경우
-            if is_upper and not top_cafes and "sp_ncafe" not in section_class:
-                cafes = _collect_cafe_names_from_section(section, is_grouped, 3)
+            # 상위 카페 3개 추출: 윗탭 섹션 여러 개를 걸쳐서 수집 (3개 찰 때까지)
+            if is_upper and len(top_cafes) < 3 and "sp_ncafe" not in section_class:
+                need = 3 - len(top_cafes)
+                cafes = _collect_cafe_names_from_section(section, is_grouped, need)
+                for c in cafes:
+                    if c not in top_cafes:
+                        top_cafes.append(c)
+                        if len(top_cafes) >= 3:
+                            break
                 if cafes:
-                    top_cafes = cafes
-                    print(f"[{keyword}] 상위 카페: {top_cafes}", flush=True)
+                    print(f"[{keyword}] 카페 수집: +{cafes} → {top_cafes}", flush=True)
 
             # 순위 체크 (이미 찾았으면 스킵하고 카페만 계속 탐색)
             if rank_result is None:
