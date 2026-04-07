@@ -34,28 +34,59 @@ def _headers(method, uri):
 
 
 _cache = {}
+_last_call_time = 0.0
 
 
 def get_search_volume(keyword: str) -> int:
-    """PC + 모바일 월간 검색량 합산. 실패 시 0 반환."""
+    """PC + 모바일 월간 검색량 합산. 실패 시 0 반환. 429 시 재시도."""
+    global _last_call_time
     if keyword in _cache:
         return _cache[keyword]
 
     uri = "/keywordstool"
-    headers = _headers("GET", uri)
-    if not headers:
-        print("[광고API] 환경변수 없음 - 검색량 조회 건너뜀")
+
+    # Rate limit 방지: 마지막 호출로부터 최소 0.3초 대기
+    now = time.time()
+    elapsed = now - _last_call_time
+    if elapsed < 0.3:
+        time.sleep(0.3 - elapsed)
+
+    # 최대 3회 재시도 (429 시 지수 backoff)
+    max_retries = 3
+    for attempt in range(max_retries):
+        headers = _headers("GET", uri)
+        if not headers:
+            print("[광고API] 환경변수 없음 - 검색량 조회 건너뜀")
+            _cache[keyword] = 0
+            return 0
+
+        try:
+            params = {"hintKeywords": keyword.replace(" ", ""), "showDetail": "1"}
+            r = requests.get(BASE_URL + uri, headers=headers, params=params, timeout=10)
+            _last_call_time = time.time()
+
+            if r.status_code == 429:
+                wait = (attempt + 1) * 2  # 2초, 4초, 6초
+                print(f"[광고API] '{keyword}' 429 Too Many Requests - {wait}초 대기 후 재시도 ({attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+
+            if r.status_code != 200:
+                print(f"[광고API] '{keyword}' 조회 실패 ({r.status_code}): {r.text[:120]}")
+                _cache[keyword] = 0
+                return 0
+            break
+        except Exception as e:
+            print(f"[광고API] '{keyword}' 네트워크 오류: {e}")
+            _cache[keyword] = 0
+            return 0
+    else:
+        # 재시도 모두 실패
+        print(f"[광고API] '{keyword}' 재시도 {max_retries}회 모두 실패")
         _cache[keyword] = 0
         return 0
 
     try:
-        # hintKeywords 는 공백 제거한 키워드
-        params = {"hintKeywords": keyword.replace(" ", ""), "showDetail": "1"}
-        r = requests.get(BASE_URL + uri, headers=headers, params=params, timeout=10)
-        if r.status_code != 200:
-            print(f"[광고API] '{keyword}' 조회 실패 ({r.status_code}): {r.text[:120]}")
-            _cache[keyword] = 0
-            return 0
 
         data = r.json()
         rows = data.get("keywordList") or []
