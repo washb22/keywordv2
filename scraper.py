@@ -230,63 +230,98 @@ def get_divider_y(driver):
 
 
 def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
-    """섹션에서 카페 '이름' 추출. URL 패턴 기반:
-    - 카페 홈 링크(articles 경로 없음) = 카페명
-    - 게시글 링크(/articles/ 포함) = 게시글 제목 → 제외
+    """섹션에서 카페 '이름' 추출. 여러 전략 시도:
+    1. Naver 디자인 시스템 셀렉터 (fds-comps-footer-profile-name 등)
+    2. 공통 출처 클래스 (user_box, source, cite 등)
+    3. 카페 홈 URL 링크
+    4. Fallback: article 섹션에서 짧은 텍스트 span
     """
     cafe_names = []
     seen = set()
-    try:
-        links = section.find_elements(By.CSS_SELECTOR, "a[href*='cafe.naver.com']")
-        for link in links:
-            try:
-                if not link.is_displayed():
-                    continue
-                href = link.get_attribute("href") or ""
-                # 카페 홈 URL만 (게시글 URL 제외)
-                if not _is_cafe_home_url(href):
-                    continue
-                name = _extract_cafe_name_from_link(link)
-                if not name:
-                    continue
-                # 너무 길면 게시글 제목일 가능성 높음
-                if len(name) > 15:
-                    continue
-                if name in seen:
-                    continue
-                seen.add(name)
-                cafe_names.append(name)
-                if len(cafe_names) >= max_count:
-                    break
-            except Exception:
-                continue
 
-        # Fallback: URL 기반 탐색 실패 시, 요소 class 기반으로 카페명 찾기
-        if not cafe_names:
-            source_selectors = [
-                "[class*='cafe_name']", "[class*='source_info']",
-                "[class*='sub_info']", "[class*='user_info']",
-                "cite", ".source", ".user_box a",
-            ]
-            for sel in source_selectors:
-                try:
-                    elements = section.find_elements(By.CSS_SELECTOR, sel)
-                    for el in elements:
+    def _add(name):
+        if not name:
+            return False
+        name = name.strip()
+        if "\n" in name:
+            name = name.split("\n")[0].strip()
+        if not (1 < len(name) < 15):
+            return False
+        # 필터: 날짜/시간/조회수/댓글수 등 숫자성 텍스트 제외
+        if name.replace(",", "").replace(".", "").isdigit():
+            return False
+        if name in seen:
+            return False
+        seen.add(name)
+        cafe_names.append(name)
+        return len(cafe_names) >= max_count
+
+    try:
+        # 전략 1: Naver 디자인 시스템 + 공통 출처 클래스
+        priority_selectors = [
+            ".fds-comps-footer-profile-name",
+            ".fds-comps-right-image-text-title",
+            "[class*='user_box_inner'] a",
+            "[class*='user_box'] > a",
+            "[class*='source_info']",
+            "[class*='cafe_name']",
+            "cite",
+            ".name",
+            ".sub_title",
+        ]
+        for sel in priority_selectors:
+            if len(cafe_names) >= max_count:
+                break
+            try:
+                elements = section.find_elements(By.CSS_SELECTOR, sel)
+                for el in elements:
+                    try:
                         if not el.is_displayed():
                             continue
                         text = (el.text or "").strip()
-                        # 첫 줄만 (여러 줄이면 카페명 + 부가정보)
-                        if "\n" in text:
-                            text = text.split("\n")[0].strip()
-                        if text and 1 < len(text) < 15 and text not in seen:
-                            seen.add(text)
-                            cafe_names.append(text)
-                            if len(cafe_names) >= max_count:
-                                return cafe_names
+                        if _add(text):
+                            return cafe_names
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
+        # 전략 2: 카페 홈 URL 링크 텍스트
+        if len(cafe_names) < max_count:
+            all_cafe_links = section.find_elements(By.CSS_SELECTOR, "a[href*='cafe.naver.com']")
+            for link in all_cafe_links:
+                try:
+                    if not link.is_displayed():
+                        continue
+                    href = link.get_attribute("href") or ""
+                    if not _is_cafe_home_url(href):
+                        continue
+                    text = (link.text or "").strip()
+                    if _add(text):
+                        return cafe_names
                 except Exception:
                     continue
-    except Exception:
-        pass
+
+        # 진단용 로그: 결과 없으면 섹션 내부 구조 일부 덤프
+        if not cafe_names:
+            try:
+                sample_html = section.get_attribute("outerHTML") or ""
+                print(f"[카페추출-DEBUG] 섹션에서 카페명 못 찾음. HTML 샘플 (앞 1500자):", flush=True)
+                print(sample_html[:1500], flush=True)
+                # 섹션 내 모든 cafe.naver.com 링크 로그
+                links = section.find_elements(By.CSS_SELECTOR, "a[href*='cafe.naver.com']")
+                print(f"[카페추출-DEBUG] 카페 링크 총 {len(links)}개:", flush=True)
+                for i, link in enumerate(links[:10]):
+                    try:
+                        href = link.get_attribute("href") or ""
+                        text = (link.text or "").strip()[:30]
+                        print(f"  [{i}] text='{text}' href={href[:80]}", flush=True)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[카페추출] 예외: {e}", flush=True)
     return cafe_names
 
 
