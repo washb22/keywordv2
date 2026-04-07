@@ -246,13 +246,26 @@ def _collect_cafe_names_from_section(section, is_grouped, max_count=3):
         if "\n" in name:
             name = name.split("\n")[0]
         name = name.strip()
-        # 부연설명 구분자 앞까지만 (예: "줌마렐라 [김해, 장유...]" → "줌마렐라")
-        for sep in ["[", "(", " -", " |", " :"]:
-            if sep in name:
-                name = name.split(sep)[0].strip()
-                break
+
+        # 시작이 "["면 괄호 안쪽 텍스트만 추출 (예: "[느영나영] 제주도여행..." → "느영나영")
+        if name.startswith("["):
+            import re
+            m = re.match(r'\[([^\]]+)\]', name)
+            if m:
+                name = m.group(1).strip()
+        else:
+            # 일반: 구분자 앞까지만
+            # - "[", "(" : 부연설명 시작
+            # - " -", " |", " :" : 슬로건 구분
+            # - "/" : 태그 리스트 (예: "해돌 해피돌싱/올드싱글/...")
+            # - " ★", " ☆" : 별표 수식어 (예: "전간조 ★전국간호조무사...")
+            for sep in ["[", "(", " -", " |", " :", "/", " ★", " ☆"]:
+                if sep in name:
+                    name = name.split(sep)[0].strip()
+                    break
+
         # 끝의 특수문자/이모지 제거 (예: "아름다운동행!" → "아름다운동행")
-        name = name.rstrip("!?.,~★☆*#@")
+        name = name.rstrip("!?.,~★☆*#@-_ ")
         name = name.strip()
         return name
 
@@ -405,8 +418,8 @@ def check_sections(driver, keyword, post_url, post_title):
                             rank_result = (tab, tab_rank, tab)
                         break
 
-            # 둘 다 찾았으면 종료
-            if rank_result and top_cafes:
+            # 순위 찾았고 + 카페 3개 다 모았으면 종료
+            if rank_result and len(top_cafes) >= 3:
                 break
         except Exception:
             continue
