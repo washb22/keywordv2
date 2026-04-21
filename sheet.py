@@ -3,8 +3,40 @@
 import os
 import json
 import gspread
+import requests
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+
+
+# 단축 URL (naver.me 등) → 풀 URL 펼치기 (scraper 의 URL 매칭은 풀 URL 전제)
+SHORT_DOMAINS = ('naver.me', 'me2.do', 'bit.ly', 'han.gl', 'tinyurl.com')
+_expand_cache = {}
+
+
+def expand_short_url(url, timeout=5):
+    """단축 도메인이면 redirect 따라가서 최종 URL 반환. 실패 시 원본 그대로."""
+    if not url:
+        return url
+    try:
+        host = url.split('//', 1)[-1].split('/', 1)[0].lower()
+    except Exception:
+        return url
+    if not any(d in host for d in SHORT_DOMAINS):
+        return url
+    if url in _expand_cache:
+        return _expand_cache[url]
+    try:
+        r = requests.get(url, allow_redirects=True, timeout=timeout, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        final = r.url or url
+        _expand_cache[url] = final
+        if final != url:
+            print(f"[시트] 단축링크 펼침: {url} → {final}")
+        return final
+    except Exception as e:
+        print(f"[시트] 단축링크 펼치기 실패 ({url}): {e}")
+        return url
 
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
@@ -83,6 +115,8 @@ def read_keywords(sheet_name='키워드', spreadsheet_id=None):
 
         if not keyword or not url:
             continue
+
+        url = expand_short_url(url)
 
         keywords.append({
             'keyword': keyword,
